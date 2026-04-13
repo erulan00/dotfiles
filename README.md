@@ -2,7 +2,7 @@
 dotfiles
 
 ## warning
-- make sure 
+- make sure authority to execute shell
 
 ## installed
 - guake
