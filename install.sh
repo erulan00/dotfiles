@@ -20,9 +20,17 @@ sudo apt install -y \
     regolith-session-flashback \
     regolith-look-lascaille \
     xdg-desktop-portal-regolith \
+    rclone \
 
 # i3 settings
 stow i3
+
+# rclone settings
+stow -v rclone
+
+systemctl --user daemon-reload
+systemctl --user start rclone-mount.service
+systemctl --user enable rclone-mount.service
 
 # install homebrew
 if ! command -v brew &> /dev/null; then
@@ -40,6 +48,7 @@ if ! command -v warp-terminal &> /dev/null; then
     sudo pacman -Sy warp-terminal
 fi
 
+# set warp as default terminal emulator
 sudo update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/bin/warp-terminal 50
 sudo update-alternatives --config x-terminal-emulator
 
