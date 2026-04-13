@@ -1,0 +1,1 @@
+guake --save-preferences ~/dotfiles/guake/guake-settings
