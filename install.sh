@@ -31,7 +31,7 @@ if ! command -v brew &> /dev/null; then
     sudo apt install -y build-essential
 fi
 
-# install warp
+# install warp(or download .deb and install it)
 if ! command -v warp-terminal &> /dev/null; then
     echo "Warp not found. Installing Warp..."
     sudo sh -c "echo -e '\n[warpdotdev]\nServer = https://releases.warp.dev/linux/pacman/\$repo/\$arch' >> /etc/pacman.conf"

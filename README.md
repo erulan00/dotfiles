@@ -5,4 +5,6 @@ dotfiles
 - make sure authority to execute shell
 
 ## installed
-- guake
+- brew
+- warp
+- regolith(i3)
