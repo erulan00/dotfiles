@@ -16,15 +16,11 @@ sudo tee /etc/apt/sources.list.d/regolith.list
 sudo apt update
 sudo apt install -y \
     stow \
-    guake \
+    ibus-mozc \
     regolith-desktop \
     regolith-session-flashback \
     regolith-look-lascaille \
     xdg-desktop-portal-regolith \
-
-# Guake settings
-stow guake
-guake --restore-preferences ~/dotfiles/guake/guake-settings
 
 # i3 settings
 stow i3
