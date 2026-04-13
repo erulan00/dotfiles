@@ -1,7 +1,6 @@
 # !/bin/bash
 
 # register GPG key
-
 # regolith
 # 1. Register the Regolith public key to your local apt
 wget -qO - https://archive.regolith-desktop.com/regolith.key | \
@@ -24,5 +23,24 @@ sudo apt install -y \
 
 # i3 settings
 stow i3
+
+# install homebrew
+if ! command -v brew &> /dev/null; then
+    echo "Homebrew not found. Installing Homebrew..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    sudo apt install -y build-essential
+fi
+
+# install warp
+if ! command -v warp-terminal &> /dev/null; then
+    echo "Warp not found. Installing Warp..."
+    sudo sh -c "echo -e '\n[warpdotdev]\nServer = https://releases.warp.dev/linux/pacman/\$repo/\$arch' >> /etc/pacman.conf"
+    sudo pacman-key -r "linux-maintainers@warp.dev"
+    sudo pacman-key --lsign-key "linux-maintainers@warp.dev"
+    sudo pacman -Sy warp-terminal
+fi
+
+sudo update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/bin/warp-terminal 50
+sudo update-alternatives --config x-terminal-emulator
 
 sleep
