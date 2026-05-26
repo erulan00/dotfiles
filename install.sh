@@ -21,6 +21,7 @@ sudo apt install -y \
     regolith-look-lascaille \
     xdg-desktop-portal-regolith \
     rclone \
+    tree \
 
 # i3 settings
 stow i3
@@ -31,6 +32,8 @@ stow -v rclone
 systemctl --user daemon-reload
 systemctl --user start rclone-mount.service
 systemctl --user enable rclone-mount.service
+systemctl --user start rclone-sync.timer
+systemctl --user enable rclone-sync.timer
 
 # install homebrew
 if ! command -v brew &> /dev/null; then

@@ -1,0 +1,133 @@
+--- a/.config/eww/lockscreen/eww.xml
++++ b/.config/eww/lockscreen/eww.xml
+@@ -1,5 +1,13 @@
+ <eww>
+   <definitions>
++	<!-- clock -->
++	<def name="clock">
++		<box class="clock_win" orientation="v" space-evenly="false" halign="center" valign="center">
++			<label class="clock_time" text="{{LOCK_TIME}}"/>
++			<label class="clock_date" text="{{LOCK_DATE}}"/>
++		</box>
++	</def>
++
+ 	<!-- weather -->
+ 	<def name="weather">
+ 		<box class="weather_win">
+@@ -45,29 +53,41 @@
+   </definitions>
+ 
+   <variables>
++    <!-- Clock vars -->
++    <script-var name="LOCK_TIME" interval="1s">date '+%H:%M:%S'</script-var>
++    <script-var name="LOCK_DATE" interval="60s">date '+%Y-%m-%d %A'</script-var>
++
+     <!--Weather vars-->
+-    <script-var name="ICON" interval="15m">~/.config/eww/scripts/weather_info --icon</script-var>
+-    <script-var name="STAT" interval="15m">~/.config/eww/scripts/weather_info --stat</script-var>
+-    <script-var name="TEMP" interval="15m">~/.config/eww/scripts/weather_info --temp</script-var>
+-    <script-var name="HEX" interval="15m">~/.config/eww/scripts/weather_info --hex</script-var>
++    <script-var name="ICON" interval="15m">~/.config/eww/lockscreen/scripts/weather_info --icon</script-var>
++    <script-var name="STAT" interval="15m">~/.config/eww/lockscreen/scripts/weather_info --stat</script-var>
++    <script-var name="TEMP" interval="15m">~/.config/eww/lockscreen/scripts/weather_info --temp</script-var>
++    <script-var name="HEX" interval="15m">~/.config/eww/lockscreen/scripts/weather_info --hex</script-var>
+     <!-- Music vars -->
+     <script-var name="music" interval="5s">[ $(ps h -C spotify | wc -l) != 0 ] && playerctl metadata --format '{{ artist }} - {{ title }}'</script-var>
+     <script-var name="music2" interval="5s">[ $(ps h -C spotify | wc -l) != 0 ] && playerctl metadata --format ' {{ title }}'</script-var>
+     <script-var name="music3" interval="5s">[ $(ps h -C spotify | wc -l) != 0 ] && playerctl metadata --format ' {{ artist }}'</script-var>
+     <script-var name="music4" interval="5s">[ $(ps h -C spotify | wc -l) != 0 ] && playerctl metadata --format ' {{ album }}'</script-var>
+-    <script-var name="art" interval="5s">~/.config/eww/scripts/getart</script-var>
+-    <script-var name="volume" interval="3ms">~/.config/eww/scripts/getvol</script-var>
+-    <script-var name="bright" interval="1ms">~/.config/eww/scripts/getbri</script-var>
++    <script-var name="art" interval="5s">~/.config/eww/lockscreen/scripts/getart</script-var>
++    <script-var name="volume" interval="3ms">~/.config/eww/lockscreen/scripts/getvol</script-var>
++    <script-var name="bright" interval="1ms">~/.config/eww/lockscreen/scripts/getbri</script-var>
+     <script-var name="musicstat" interval="1s">~/bin/spotifystatus</script-var>
+-    <script-var name="cover" interval="5s">[ $(ps h -C spotify | wc -l) != 0 ] && ~/.config/eww/scripts/echoart</script-var>
++    <script-var name="cover" interval="5s">[ $(ps h -C spotify | wc -l) != 0 ] && ~/.config/eww/lockscreen/scripts/echoart</script-var>
+     <!-- Cal var -->
+-    <script-var name="cal-per-dia-w" interval="1s">~/.config/eww/scripts/cal-per-dia</script-var>
+-    <script-var name="cal-per-tit-w" interval="1s">~/.config/eww/scripts/cal-per-tit</script-var>
+-    <script-var name="cal-tre-dia-w" interval="1s">~/.config/eww/scripts/cal-tre-dia</script-var>
+-    <script-var name="cal-tre-tit-w" interval="1s">~/.config/eww/scripts/cal-tre-tit</script-var>
++    <script-var name="cal-per-dia-w" interval="1s">~/.config/eww/lockscreen/scripts/cal-per-dia</script-var>
++    <script-var name="cal-per-tit-w" interval="1s">~/.config/eww/lockscreen/scripts/cal-per-tit</script-var>
++    <script-var name="cal-tre-dia-w" interval="1s">~/.config/eww/lockscreen/scripts/cal-tre-dia</script-var>
++    <script-var name="cal-tre-tit-w" interval="1s">~/.config/eww/lockscreen/scripts/cal-tre-tit</script-var>
+   </variables>
+  
+   <windows>
++
++    <!-- clock -->
++    <window name="clock" stacking="fg" focusable="false">
++      <geometry x="0px" y="0px" width="100%" height="100%" anchor="center center"/>
++      <widget>
++        <clock/>
++      </widget>
++    </window>
+     <!-- weather -->
+     <window name="weather" stacking="fg" focusable="false" screen="1">
+     	<geometry x="60px" y="20px" width="300" height="100"/>
+
+--- a/.config/eww/lockscreen/eww.scss
++++ b/.config/eww/lockscreen/eww.scss
+@@ -107,3 +107,24 @@
+   margin-bottom: 20px;
+   font-size: 20px;
+ }
++
++
++/** Clock ***************************************/
++.clock_win {
++  background-color: unset;
++}
++
++.clock_time {
++  font-family: Iosevka, "JetBrainsMono Nerd Font", monospace;
++  font-size: 112px;
++  font-weight: bold;
++  color: #ffffff;
++}
++
++.clock_date {
++  font-family: Iosevka, "JetBrainsMono Nerd Font", monospace;
++  font-size: 28px;
++  font-weight: bold;
++  color: #ffd5cd;
++  margin-top: 16px;
++}
+
+--- a/.local/bin/i3lock-widgets
++++ b/.local/bin/i3lock-widgets
+@@ -3,13 +3,14 @@
+ 
+ EWW="eww -c $HOME/.config/eww/lockscreen"
+ LOCK_IMG="$HOME/.config/eww/lockscreen/images/fons-lock.png"
++[ -f "$LOCK_IMG" ] || LOCK_IMG="$HOME/.config/eww/lockscreen/images/image.png"
+ 
+ pkill -u "$USER" -USR1 dunst || true
+ 
+ $EWW close-all || true
+ sleep 0.2
+ 
+-$EWW open-many player-spotify weather calendari &
++$EWW open-many clock player-spotify weather calendari &
+ 
+ i3lock-color -n --force-clock -i "$LOCK_IMG" \
+   --ind-pos="w/2:h/2+158" \
+@@ -18,10 +19,10 @@
+   --inside-color=5f5f5f00 \
+   --ring-color=fefefe00 \
+   --separator-color=00000000 \
+-  --time-str="%H:%M" \
+-  --time-size=120 \
+-  --date-str="%a, %d %b" \
+-  --date-size=35 \
++  --time-str="" \
++  --time-size=1 \
++  --date-str="" \
++  --date-size=1 \
+   --line-uses-inside \
+   --radius 115 \
+   --ring-width 4 \
+

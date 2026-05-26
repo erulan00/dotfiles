@@ -1,6 +1,9 @@
 # dotfiles
 dotfiles
 
+## requirements
+- place 'sync' folder in Google Drive
+
 ## warning
 - make sure authority to execute shell
 
@@ -24,3 +27,4 @@ rclone config
 7. service_account_file は空白のままEnter
 8. 高度な設定は n（デフォルト）
 9. 自動設定は y（デフォルト）
+

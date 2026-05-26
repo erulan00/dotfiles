@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+"$HOME/.local/bin/i3lock-widgets"
+
+pkill -u "$USER" -USR2 dunst || true
+eww -c "$HOME/.config/eww/lockscreen" close-all || true

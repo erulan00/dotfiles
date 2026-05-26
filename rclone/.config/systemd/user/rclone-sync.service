@@ -1,0 +1,10 @@
+[Unit]
+Description=Rclone Google Drive Sync Service
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/bin/rclone-sync.sh
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+EWW="eww -c $HOME/.config/eww/lockscreen"
+LOCK_IMG="$HOME/.config/eww/lockscreen/images/fons-lock.png"
+
+pkill -u "$USER" -USR1 dunst || true
+
+$EWW close-all || true
+sleep 0.2
+
+$EWW open-many player-spotify weather calendari &
+
+i3lock-color -n --force-clock -i "$LOCK_IMG" \
+  --ind-pos="w/2:h/2+158" \
+  --time-pos="w/2:h/4-5" \
+  --date-pos="w/2:h/4+55" \
+  --inside-color=5f5f5f00 \
+  --ring-color=fefefe00 \
+  --separator-color=00000000 \
+  --time-str="%H:%M" \
+  --time-size=120 \
+  --date-str="%a, %d %b" \
+  --date-size=35 \
+  --line-uses-inside \
+  --radius 115 \
+  --ring-width 4 \
+  --indicator \
+  --verif-text="" \
+  --wrong-text="" \
+  --noinput-text="" \
+  --clock \
+  --pass-media-keys
