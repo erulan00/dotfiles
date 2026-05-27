@@ -1,4 +1,5 @@
-# !/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
 # register GPG key
 # regolith
@@ -22,12 +23,23 @@ sudo apt install -y \
     xdg-desktop-portal-regolith \
     rclone \
     tree \
+    playerctl \
+    jq \
+    curl \
+    imagemagick \
+    khal \
+    fonts-jetbrains-mono
 
 # i3 settings
 stow i3
 
 # rclone settings
 stow -v rclone
+
+# eww lockscreen settings and helper scripts
+mkdir -p "$HOME/.config" "$HOME/.local"
+stow -v -t "$HOME/.config" .config
+stow -v -t "$HOME/.local" .local
 
 systemctl --user daemon-reload
 systemctl --user start rclone-mount.service
@@ -44,15 +56,30 @@ fi
 
 # install warp(or download .deb and install it)
 if ! command -v warp-terminal &> /dev/null; then
-    echo "Warp not found. Installing Warp..."
-    sudo sh -c "echo -e '\n[warpdotdev]\nServer = https://releases.warp.dev/linux/pacman/\$repo/\$arch' >> /etc/pacman.conf"
-    sudo pacman-key -r "linux-maintainers@warp.dev"
-    sudo pacman-key --lsign-key "linux-maintainers@warp.dev"
-    sudo pacman -Sy warp-terminal
+    if command -v pacman &> /dev/null; then
+        echo "Warp not found. Installing Warp with pacman..."
+        sudo sh -c "echo -e '\n[warpdotdev]\nServer = https://releases.warp.dev/linux/pacman/\$repo/\$arch' >> /etc/pacman.conf"
+        sudo pacman-key -r "linux-maintainers@warp.dev"
+        sudo pacman-key --lsign-key "linux-maintainers@warp.dev"
+        sudo pacman -Sy warp-terminal
+    else
+        echo "Warp not found. Download and install the Ubuntu .deb package manually."
+    fi
 fi
 
 # set warp as default terminal emulator
-sudo update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/bin/warp-terminal 50
-sudo update-alternatives --config x-terminal-emulator
+if command -v warp-terminal &> /dev/null; then
+    sudo update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/bin/warp-terminal 50
+    sudo update-alternatives --config x-terminal-emulator
+fi
 
-sleep
+missing_commands=()
+for command_name in eww i3lock-color; do
+    if ! command -v "$command_name" &> /dev/null; then
+        missing_commands+=("$command_name")
+    fi
+done
+
+if [ "${#missing_commands[@]}" -gt 0 ]; then
+    echo "Install these manually for the EWW lockscreen: ${missing_commands[*]}"
+fi

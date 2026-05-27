@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 tmp_dir="/tmp/spotify"
 tmp_cover_path=$tmp_dir/cover.png
+fallback_cover="$HOME/.config/eww/lockscreen/images/image.png"
 
-if [ ! -d $tmp_dir ]; then
-	mkdir -p $tmp_dir
+mkdir -p "$tmp_dir"
+
+if ! command -v playerctl >/dev/null 2>&1; then
+	cp "$fallback_cover" "$tmp_cover_path" 2>/dev/null || true
+	exit 0
 fi
 
-artlink="$(playerctl metadata mpris:artUrl | sed -e 's/open.spotify.com/i.scdn.co/g')"
+art_url="$(playerctl metadata mpris:artUrl 2>/dev/null || true)"
 
-if [ $(playerctl metadata mpris:artUrl) ]; then
-	curl -s "$artlink" --output $tmp_cover_path;
-	convert $tmp_cover_path -resize 150x150 $tmp_cover_path;
-else cp ~/.config/eww/images/image.png $tmp_cover_path;
+if [ -n "$art_url" ] && command -v curl >/dev/null 2>&1; then
+	artlink="$(printf '%s\n' "$art_url" | sed -e 's/open.spotify.com/i.scdn.co/g')"
+	curl -fsSL "$artlink" --output "$tmp_cover_path" 2>/dev/null || cp "$fallback_cover" "$tmp_cover_path"
+	if command -v convert >/dev/null 2>&1; then
+		convert "$tmp_cover_path" -resize 150x150 "$tmp_cover_path" 2>/dev/null || true
+	fi
+else
+	cp "$fallback_cover" "$tmp_cover_path" 2>/dev/null || true
 fi

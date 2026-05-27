@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+EWW_CONFIG="${EWW_CONFIG:-$HOME/.config/eww/lockscreen}"
+LOCK_SCRIPT="${LOCK_SCRIPT:-$HOME/.local/bin/i3lock-widgets}"
+
+usage() {
+  cat <<'EOF'
+Usage: lockscreen-check [check|daemon|clock|all|lock]
+
+check   Verify dependencies, files, and helper scripts.
+daemon  Start the eww daemon for the lockscreen config.
+clock   Open only the EWW clock window.
+all     Open all EWW lockscreen widgets.
+lock    Run the full lockscreen command.
+EOF
+}
+
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    printf 'missing: %s\n' "$1"
+    return 1
+  fi
+  printf 'ok: %s -> %s\n' "$1" "$(command -v "$1")"
+}
+
+check_file() {
+  if [ ! -e "$1" ]; then
+    printf 'missing: %s\n' "$1"
+    return 1
+  fi
+  printf 'ok: %s\n' "$1"
+}
+
+check_executable() {
+  if [ ! -x "$1" ]; then
+    printf 'missing or not executable: %s\n' "$1"
+    return 1
+  fi
+  printf 'ok: %s\n' "$1"
+}
+
+run_check() {
+  local failed=0
+
+  require_command eww || failed=1
+  require_command i3lock-color || failed=1
+  require_command playerctl || true
+  require_command jq || true
+  require_command curl || true
+  require_command convert || true
+  require_command khal || true
+
+  check_file "$EWW_CONFIG/eww.xml" || failed=1
+  check_file "$EWW_CONFIG/eww.scss" || failed=1
+  check_file "$EWW_CONFIG/images/image.png" || failed=1
+  check_executable "$LOCK_SCRIPT" || failed=1
+
+  for helper in weather_info getart echoart cal-per-dia cal-per-tit cal-tre-dia cal-tre-tit; do
+    check_executable "$EWW_CONFIG/scripts/$helper" || failed=1
+  done
+
+  "$EWW_CONFIG/scripts/weather_info" --icon >/dev/null || failed=1
+  "$EWW_CONFIG/scripts/weather_info" --hex >/dev/null || failed=1
+  "$EWW_CONFIG/scripts/getart" >/dev/null || failed=1
+
+  if [ "$failed" -ne 0 ]; then
+    printf 'lockscreen check failed\n' >&2
+    return 1
+  fi
+
+  printf 'lockscreen check passed\n'
+}
+
+case "${1:-check}" in
+  check)
+    run_check
+    ;;
+  daemon)
+    eww -c "$EWW_CONFIG" daemon
+    ;;
+  clock)
+    eww -c "$EWW_CONFIG" open clock
+    ;;
+  all)
+    eww -c "$EWW_CONFIG" open-many clock weather calendari player-spotify
+    ;;
+  lock)
+    "$LOCK_SCRIPT"
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

@@ -4,4 +4,6 @@ set -euo pipefail
 "$HOME/.local/bin/i3lock-widgets"
 
 pkill -u "$USER" -USR2 dunst || true
-eww -c "$HOME/.config/eww/lockscreen" close-all || true
+if command -v eww >/dev/null 2>&1; then
+  eww -c "$HOME/.config/eww/lockscreen" close-all || true
+fi

@@ -107,3 +107,24 @@ window {
   margin-bottom: 20px;
   font-size: 20px;
 }
+
+
+/** Clock ***************************************/
+.clock_win {
+  background-color: unset;
+}
+
+.clock_time {
+  font-family: Iosevka, "JetBrainsMono Nerd Font", monospace;
+  font-size: 112px;
+  font-weight: bold;
+  color: #ffffff;
+}
+
+.clock_date {
+  font-family: Iosevka, "JetBrainsMono Nerd Font", monospace;
+  font-size: 28px;
+  font-weight: bold;
+  color: #ffd5cd;
+  margin-top: 16px;
+}

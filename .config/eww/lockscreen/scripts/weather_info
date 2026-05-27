@@ -1,7 +1,12 @@
 #!/bin/bash
 
 ## Collect data
-cache_dir="$HOME/.cache/eww/weather"
+cache_base="${XDG_CACHE_HOME:-$HOME/.cache}"
+cache_dir="${cache_base}/eww/weather"
+if ! mkdir -p "$cache_dir" 2>/dev/null; then
+	cache_dir="/tmp/eww-weather-${USER:-user}"
+	mkdir -p "$cache_dir"
+fi
 cache_weather_stat=${cache_dir}/weather-stat
 cache_weather_degree=${cache_dir}/weather-degree
 cache_weather_quote=${cache_dir}/weather-quote
@@ -9,17 +14,21 @@ cache_weather_hex=${cache_dir}/weather-hex
 cache_weather_icon=${cache_dir}/weather-icon
 
 ## Weather data
-KEY=""
-ID=""
+KEY="${OPENWEATHER_API_KEY:-}"
+ID="${OPENWEATHER_CITY_ID:-}"
 UNIT="metric" #Options are 'metric' and 'imperial'
-
-## Make cache dir
-if [[ ! -d "$cache_dir" ]]; then
-	mkdir -p ${cache_dir}
-fi
 
 ## Get data
 get_weather_data() {
+	if [ -z "$KEY" ] || [ -z "$ID" ] || ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+		echo "Weather Unavailable" > "${cache_weather_stat}"
+		echo " " > "${cache_weather_icon}"
+		echo -e "Weather data is not configured\nSet OPENWEATHER_API_KEY and OPENWEATHER_CITY_ID" > "${cache_weather_quote}"
+		echo "-" > "${cache_weather_degree}"
+		echo "#adadff" > "${cache_weather_hex}"
+		return 0
+	fi
+
 	weather=`curl -sf "http://api.openweathermap.org/data/2.5/weather?APPID="$KEY"&id="$ID"&units="$UNIT""`
 	echo ${weather}
 
@@ -114,17 +123,26 @@ get_weather_data() {
 			weather_quote="Sort of odd, I don't know what to forecast \nMake sure you have a good time!"
 			weather_hex="#adadff"
 		fi
-		echo "$weather_icon" >  ${cache_weather_icon}
-		echo "$weather_description" > ${cache_weather_stat}
-		echo "$weather_temp""°C" > ${cache_weather_degree}
-		echo -e "$weather_quote" > ${cache_weather_quote}
-		echo "$weather_hex" > ${cache_weather_hex}
+		echo "$weather_icon" >  "${cache_weather_icon}"
+		echo "$weather_description" > "${cache_weather_stat}"
+		echo "$weather_temp""°C" > "${cache_weather_degree}"
+		echo -e "$weather_quote" > "${cache_weather_quote}"
+		echo "$weather_hex" > "${cache_weather_hex}"
 	else
-		echo "Weather Unavailable" > ${cache_weather_stat}
-		echo " " > ${cache_weather_icon}
-		echo -e "Ah well, no weather huh? \nEven if there's no weather, it's gonna be a great day!" > ${cache_weather_quote}
-		echo "-" > ${cache_weather_degree}
-		echo "#adadff" > ${tcache_weather_hex}
+		echo "Weather Unavailable" > "${cache_weather_stat}"
+		echo " " > "${cache_weather_icon}"
+		echo -e "Ah well, no weather huh? \nEven if there's no weather, it's gonna be a great day!" > "${cache_weather_quote}"
+		echo "-" > "${cache_weather_degree}"
+		echo "#adadff" > "${cache_weather_hex}"
+	fi
+}
+
+ensure_weather_cache() {
+	if [ ! -f "${cache_weather_stat}" ] ||
+		[ ! -f "${cache_weather_degree}" ] ||
+		[ ! -f "${cache_weather_hex}" ] ||
+		[ ! -f "${cache_weather_icon}" ]; then
+		get_weather_data
 	fi
 }
 
@@ -132,16 +150,21 @@ get_weather_data() {
 if [[ "$1" == "--getdata" ]]; then
 	get_weather_data
 elif [[ "$1" == "--icon" ]]; then
-	cat ${cache_weather_icon}
+	ensure_weather_cache
+	cat "${cache_weather_icon}"
 elif [[ "$1" == "--temp" ]]; then
-	cat ${cache_weather_degree}
+	ensure_weather_cache
+	cat "${cache_weather_degree}"
 elif [[ "$1" == "--hex" ]]; then
-	cat ${cache_weather_hex}
+	ensure_weather_cache
+	cat "${cache_weather_hex}"
 elif [[ "$1" == "--stat" ]]; then
-	cat ${cache_weather_stat}
+	ensure_weather_cache
+	cat "${cache_weather_stat}"
 elif [[ "$1" == "--quote" ]]; then
-	cat ${cache_weather_quote} | head -n1
+	ensure_weather_cache
+	cat "${cache_weather_quote}" | head -n1
 elif [[ "$1" == "--quote2" ]]; then
-	cat ${cache_weather_quote} | tail -n1
+	ensure_weather_cache
+	cat "${cache_weather_quote}" | tail -n1
 fi
-

@@ -1,6 +1,8 @@
 #!/bin/sh
 
-khal list -a "Treball" today 3d --day-format ""  --format "{start-date-long}, {start-time}-{end-time}"
+command -v khal >/dev/null 2>&1 || exit 0
+
+khal list -a "Treball" today 3d --day-format ""  --format "{start-date-long}, {start-time}-{end-time}" 2>/dev/null || true
 
 #if [ "$event" != "No events" ] 
 #then

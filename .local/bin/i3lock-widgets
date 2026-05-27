@@ -3,13 +3,33 @@ set -euo pipefail
 
 EWW="eww -c $HOME/.config/eww/lockscreen"
 LOCK_IMG="$HOME/.config/eww/lockscreen/images/fons-lock.png"
+[ -f "$LOCK_IMG" ] || LOCK_IMG="$HOME/.config/eww/lockscreen/images/image.png"
+
+missing_commands=()
+for command_name in eww i3lock-color; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    missing_commands+=("$command_name")
+  fi
+done
+
+if [ "${#missing_commands[@]}" -gt 0 ]; then
+  printf 'Missing lockscreen command(s): %s\n' "${missing_commands[*]}" >&2
+  exit 127
+fi
+
+if [ ! -f "$LOCK_IMG" ]; then
+  printf 'Lock image not found: %s\n' "$LOCK_IMG" >&2
+  exit 1
+fi
+
+trap '$EWW close-all || true' EXIT
 
 pkill -u "$USER" -USR1 dunst || true
 
 $EWW close-all || true
 sleep 0.2
 
-$EWW open-many player-spotify weather calendari &
+$EWW open-many clock player-spotify weather calendari &
 
 i3lock-color -n --force-clock -i "$LOCK_IMG" \
   --ind-pos="w/2:h/2+158" \
@@ -18,10 +38,10 @@ i3lock-color -n --force-clock -i "$LOCK_IMG" \
   --inside-color=5f5f5f00 \
   --ring-color=fefefe00 \
   --separator-color=00000000 \
-  --time-str="%H:%M" \
-  --time-size=120 \
-  --date-str="%a, %d %b" \
-  --date-size=35 \
+  --time-str="" \
+  --time-size=1 \
+  --date-str="" \
+  --date-size=1 \
   --line-uses-inside \
   --radius 115 \
   --ring-width 4 \

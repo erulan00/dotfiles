@@ -1,8 +1,10 @@
 #!/bin/sh
 
-event=$(khal list -a "Personal Calendar" today 3d --day-format ""  --format "{title}")
+command -v khal >/dev/null 2>&1 || exit 0
+
+event=$(khal list -a "Personal Calendar" today 3d --day-format ""  --format "{title}" 2>/dev/null || true)
 
 if [ "$event" != "No events" ] 
 then
-      khal list -a "Personal Calendar" today 3d --day-format ""  --format "{title}"
+      khal list -a "Personal Calendar" today 3d --day-format ""  --format "{title}" 2>/dev/null || true
 fi
