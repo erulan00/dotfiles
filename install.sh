@@ -34,9 +34,6 @@ sudo apt install -y \
 # i3 settings
 stow i3
 
-# rclone settings
-stow -v rclone
-
 # If .config/ranger is not managed by this dotfiles repository yet,
 # copy ranger's default config as a local fallback.
 
@@ -87,8 +84,6 @@ if command -v warp-terminal &> /dev/null; then
     sudo update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/bin/warp-terminal 50
     sudo update-alternatives --config x-terminal-emulator
 fi
-
-
 
 missing_commands=()
 for command_name in eww i3lock-color; do
