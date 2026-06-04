@@ -28,13 +28,28 @@ sudo apt install -y \
     curl \
     imagemagick \
     khal \
-    fonts-jetbrains-mono
+    fonts-jetbrains-mono \
+    ranger
 
 # i3 settings
 stow i3
 
 # rclone settings
 stow -v rclone
+
+# If .config/ranger is not managed by this dotfiles repository yet,
+# copy ranger's default config as a local fallback.
+
+if command -v ranger >/dev/null 2>&1; then
+    if [ ! -e "$HOME/.config/ranger/rc.conf" ]; then
+        echo "No ranger config found. Copying default ranger config..."
+        mkdir -p "$HOME/.config/ranger"
+        ranger --copy-config=all
+    fi
+else
+    echo "ranger was not installed correctly."
+    exit 1
+fi
 
 # eww lockscreen settings and helper scripts
 mkdir -p "$HOME/.config" "$HOME/.local"
@@ -72,6 +87,8 @@ if command -v warp-terminal &> /dev/null; then
     sudo update-alternatives --install /usr/bin/x-terminal-emulator x-terminal-emulator /usr/bin/warp-terminal 50
     sudo update-alternatives --config x-terminal-emulator
 fi
+
+
 
 missing_commands=()
 for command_name in eww i3lock-color; do
