@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SRC="/usr/share/i3xrocks/conf.d"
+DST="$HOME/.config/regolith3/i3xrocks/conf.d"
+
+mkdir -p "$DST"
+
+# 現在インストールされているRegolith blockletを引き継ぐ
+for file in "$SRC"/*; do
+    [[ -f "$file" ]] || continue
+
+    name="$(basename "$file")"
+
+    # CPU / RAM は今回の統合meterに置換
+    case "$name" in
+        40_cpu-usage|50_memory)
+            continue
+            ;;
+    esac
+
+    # ユーザー変更済みなら上書きしない
+    [[ -e "$DST/$name" ]] || cp "$file" "$DST/$name"
+done
+
+# 古いCPU / RAM設定があれば除去
+rm -f \
+    "$DST/40_cpu-usage" \
+    "$DST/50_memory"
+
+cat > "$DST/40_system-load" <<'EOF'
+# CPU upper / RAM lower system meter
+[system-load]
+command=$HOME/.local/bin/regolith-system-meter
+interval=2
+markup=pango
+separator=false
+separator_block_width=18
+EOF
+
+regolith-look refresh >/dev/null 2>&1 || true

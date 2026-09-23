@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+
+set -u
+
+# erulan00/dotfiles / eww lockscreen palette
+BG="#2E3440"
+TRACK="#4C566A"
+
+CPU_BASE="#FFB300"
+RAM_BASE="#ffd5cd"
+
+WARNING="#D08770"
+CRITICAL="#BF616A"
+TEXT="#ffffff"
+
+usage_color() {
+    local value="$1"
+    local base="$2"
+
+    if (( value >= 85 )); then
+        printf '%s' "$CRITICAL"
+    elif (( value >= 70 )); then
+        printf '%s' "$WARNING"
+    else
+        printf '%s' "$base"
+    fi
+}
+
+# --------------------------------------------------
+# CPU usage
+# --------------------------------------------------
+
+read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
+
+idle_now=$((idle + iowait))
+total_now=$((user + nice + system + idle + iowait + irq + softirq + steal))
+
+state="${XDG_RUNTIME_DIR:-/tmp}/regolith-system-meter-${UID}.cpu"
+
+cpu=0
+
+if [[ -r "$state" ]]; then
+    read -r total_old idle_old < "$state"
+
+    total_delta=$((total_now - total_old))
+    idle_delta=$((idle_now - idle_old))
+
+    if (( total_delta > 0 )); then
+        cpu=$((100 * (total_delta - idle_delta) / total_delta))
+    fi
+fi
+
+printf '%s %s\n' "$total_now" "$idle_now" > "$state"
+
+# --------------------------------------------------
+# RAM usage
+# --------------------------------------------------
+
+read -r mem_total mem_available < <(
+    awk '
+        /^MemTotal:/     { total=$2 }
+        /^MemAvailable:/ { available=$2 }
+        END { print total, available }
+    ' /proc/meminfo
+)
+
+ram=$((100 * (mem_total - mem_available) / mem_total))
+
+(( cpu < 0 )) && cpu=0
+(( cpu > 100 )) && cpu=100
+(( ram < 0 )) && ram=0
+(( ram > 100 )) && ram=100
+
+cpu_color="$(usage_color "$cpu" "$CPU_BASE")"
+ram_color="$(usage_color "$ram" "$RAM_BASE")"
+
+# --------------------------------------------------
+# Compact 2-row meter
+#   upper line : CPU
+#   lower line : RAM
+# --------------------------------------------------
+
+cells=25
+
+cpu_cells=$(((cpu * cells + 50) / 100))
+ram_cells=$(((ram * cells + 50) / 100))
+
+# dotfiles palette
+TRACK="#3B4252"
+
+# バーだけ小さい文字にする。
+# cells=16 のままなので解像度は落ちない。
+BAR_SIZE="4"
+
+bar=""
+
+for ((i=1; i<=cells; i++)); do
+    cpu_cell="$TRACK"
+    ram_cell="$TRACK"
+
+    (( i <= cpu_cells )) && cpu_cell="$cpu_color"
+    (( i <= ram_cells )) && ram_cell="$ram_color"
+
+    # overline = CPU
+    # underline = RAM
+    # 横幅は小さい「■」1個分
+    bar+="<span \
+font_family=\"JetBrains Mono\" \
+size=\"${BAR_SIZE}pt\" \
+foreground=\"#2E3440\" \
+overline=\"single\" \
+overline_color=\"$cpu_cell\" \
+underline=\"single\" \
+underline_color=\"$ram_cell\">■</span>"
+done
+
+cpu_text=$(printf "%3d%%" "$cpu")
+ram_text=$(printf "%3d%%" "$ram")
+
+printf '%s  <span font_family="JetBrains Mono" foreground="%s">CPU %s</span>  <span font_family="JetBrains Mono" foreground="%s">RAM %s</span>\n' \
+    "$bar" \
+    "$cpu_color" "$cpu_text" \
+    "$ram_color" "$ram_text"

@@ -53,6 +53,15 @@ mkdir -p "$HOME/.config" "$HOME/.local"
 stow -v -t "$HOME/.config" .config
 stow -v -t "$HOME/.local" .local
 
+# activate regolth system meter
+chmod +x \
+    "$HOME/.local/bin/regolith-system-meter" \
+    "$HOME/.local/bin/setup-regolith-bar"
+
+if [ -d /usr/share/i3xrocks/conf.d ]; then
+    "$HOME/.local/bin/setup-regolith-bar"
+fi
+
 systemctl --user daemon-reload
 systemctl --user start rclone-mount.service
 systemctl --user enable rclone-mount.service
