@@ -1,0 +1,7 @@
+.devspace/state/chatgpt-project.json
+.local/bin/chatgpt-pro-wrapper
+.local/bin/chatgpt-pro
+.local/bin/corepack
+.local/bin/npm
+.local/bin/npx
+.local/bin/node
