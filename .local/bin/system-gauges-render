@@ -53,22 +53,22 @@ CIRC = 64.088
 # ジャケット絵
 ART_X, ART_Y, ART_SIZE = 2.0, 2.0, 21.0
 
-# 並び(左→右): ジャケット, スペアナ, リング, 曲名 → (この右にネット速度, 時計)
+# 並び(左→右): ジャケット, 曲名, スペアナ, リング → (この右にネット速度, 時計)
 BAR_W, N_BANDS = 6.6, 24
-WAVE_X = 29.0
+WAVE_X = 170.0
 SPECTRUM_W = 185.0
-ICON_X = 330.0
-TEXT_X = 340.0
+ICON_X = 29.0
+TEXT_X = 45.0
 # タイトル表示領域は以前の半分(119px)。文字はマーキーで流す。
-TITLE_END = 459.0
-MARQUEE_GAP = 28.0
+TITLE_END = 164.0
+MARQUEE_GAP = 14.0
 MARQUEE_SPEED = 30.0  # px/s
 
 # マーキー状態: 曲が変わったら右端から流れ込ませる
 marquee_key = None
 marquee_start = 0.0
 
-# スペアナのバー配置(29..214 を 24 本)
+# スペアナのバー配置(170..355 を 24 本)
 BAR_PITCH = SPECTRUM_W / N_BANDS
 SPECTRUM_BOTTOM = 22.0
 
@@ -338,13 +338,18 @@ def media_parts(status, title, artist, now):
     viewport_w = TITLE_END - TEXT_X
 
     if full_w > viewport_w:
-        # 画面右外(=-viewport_w)から流れ込み、左へ抜けたら間隔を置いて再入場
-        cycle = viewport_w + full_w + MARQUEE_GAP
-        progress = ((now - marquee_start) * MARQUEE_SPEED) % cycle
-        offset = progress - viewport_w
-        if offset > full_w:
-            return icon, ""  # 完全に左へ抜けた後
-        x = TEXT_X - offset
+        # 右端から流れ込み、最後まで見せたら折り返す(常に何か見える)
+        travel = full_w - viewport_w
+        enter_t = viewport_w / MARQUEE_SPEED
+        elapsed = now - marquee_start
+        if elapsed < enter_t:
+            offset = elapsed * MARQUEE_SPEED
+        else:
+            duration = max(travel / MARQUEE_SPEED, 1.2)
+            ph = ((elapsed - enter_t) % (2.0 * duration)) / duration
+            d = travel * (ph if ph <= 1.0 else 2.0 - ph)
+            offset = viewport_w + d
+        x = TEXT_X + viewport_w - offset
     else:
         x = TEXT_X
 
@@ -446,6 +451,19 @@ except (OSError, ValueError):
 # 表示側の追加スムージング(データより滑らかに見せる)
 display_levels = None
 
+# メタデータが一時的に空になっても直前の表示を保持する(永続化つき)
+last_media_path = os.path.join(runtime, "last_media")
+sticky = None
+STICKY_PLAYER_SECS = 3600.0
+STICKY_GONE_SECS = 3.0
+try:
+    with open(last_media_path) as f:
+        _parts = f.read().strip().split("\t")
+    if len(_parts) >= 4 and _parts[1]:
+        sticky = (_parts[0], _parts[1], _parts[2], _parts[3], time.time())
+except (OSError, IndexError):
+    pass
+
 while True:
     loop_start = time.perf_counter()
     now = time.time()
@@ -455,14 +473,29 @@ while True:
     vram = vram_cache.get(now)
     media = media_cache.get(now)
 
-    status, title, artist, art_url = "", "", "", ""
+    p_status, p_title, p_artist, p_art = "", "", "", ""
     if "|" in media:
         parts = media.split("|", 3)
-        status = parts[0].strip()
-        title = parts[1].strip() if len(parts) > 1 else ""
-        artist = parts[2].strip() if len(parts) > 2 else ""
-        art_url = parts[3].strip() if len(parts) > 3 else ""
-    if status not in ("Playing", "Paused"):
+        p_status = parts[0].strip()
+        p_title = parts[1].strip() if len(parts) > 1 else ""
+        p_artist = parts[2].strip() if len(parts) > 2 else ""
+        p_art = parts[3].strip() if len(parts) > 3 else ""
+
+    if p_title and p_status in ("Playing", "Paused"):
+        if not sticky or (sticky[1], sticky[2], sticky[3]) != (p_title, p_artist, p_art):
+            sticky = (p_status, p_title, p_artist, p_art, now)
+            try:
+                with open(last_media_path, "w") as f:
+                    f.write("\t".join((p_status, p_title, p_artist, p_art)))
+            except OSError:
+                pass
+        status, title, artist, art_url = sticky[0], sticky[1], sticky[2], sticky[3]
+    elif sticky and now - sticky[4] <= (
+        STICKY_PLAYER_SECS if p_status in ("Playing", "Paused") else STICKY_GONE_SECS
+    ):
+        status = p_status if p_status in ("Playing", "Paused") else sticky[0]
+        title, artist, art_url = sticky[1], sticky[2], sticky[3]
+    else:
         status, title, artist, art_url = "", "", "", ""
 
     if art_url != art_url_seen:
@@ -511,9 +544,9 @@ while True:
         f'{mask_right}'
         f'{art_svg}'
         f'{media_icon}'
-        f'{ring(239, cpu, usage_color(cpu, CPU_BASE))}'
-        f'{ring(274, ram, usage_color(ram, RAM_BASE))}'
-        f'{ring(309, vram, usage_color(vram, VRAM_BASE))}'
+        f'{ring(375, cpu, usage_color(cpu, CPU_BASE))}'
+        f'{ring(410, ram, usage_color(ram, RAM_BASE))}'
+        f'{ring(445, vram, usage_color(vram, VRAM_BASE))}'
         f'{spectrum_svg(display_levels)}'
         f'</svg>'
     )
