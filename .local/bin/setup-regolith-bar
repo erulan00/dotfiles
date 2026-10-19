@@ -12,30 +12,22 @@ for file in "$SRC"/*; do
 
     name="$(basename "$file")"
 
-    # CPU / RAM は今回の統合meterに置換
-    case "$name" in
-        40_cpu-usage|50_memory)
-            continue
-            ;;
-    esac
+# CPU / RAM / VRAM は eww system-gauges オーバーレイ(リングゲージ)に置換したため、
+# i3xrocks系のCPU / RAM系blockletは導入しない。
+case "$name" in
+    40_cpu-usage|50_memory|40_system-load)
+        continue
+        ;;
+esac
 
-    # ユーザー変更済みなら上書きしない
-    [[ -e "$DST/$name" ]] || cp "$file" "$DST/$name"
+# ユーザー変更済みなら上書きしない
+[[ -e "$DST/$name" ]] || cp "$file" "$DST/$name"
 done
 
-# 古いCPU / RAM設定があれば除去
+# 旧CPU / RAM系blocklet設定があれば除去
 rm -f \
     "$DST/40_cpu-usage" \
-    "$DST/50_memory"
-
-cat > "$DST/40_system-load" <<'EOF'
-# CPU upper / RAM lower system meter
-[system-load]
-command=$HOME/.local/bin/regolith-system-meter
-interval=2
-markup=pango
-separator=false
-separator_block_width=18
-EOF
+    "$DST/50_memory" \
+    "$DST/40_system-load"
 
 regolith-look refresh >/dev/null 2>&1 || true

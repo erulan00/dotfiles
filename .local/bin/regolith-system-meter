@@ -2,32 +2,18 @@
 
 set -u
 
-# erulan00/dotfiles / eww lockscreen palette
-BG="#2E3440"
-TRACK="#4C566A"
+# i3xrocks bar用のリングゲージメータ。
+# CPU / RAM / VRAM を270度のbrailleリングで表示する(数字・文字ラベルなし)。
+# パレットは dotfiles / eww lockscreen 由来。
+# DEBUG_ART=1 のときドットグリッド(=値 .トラック スペースなし)をstderrへ出力する。
 
+TRACK="#4C566A"
 CPU_BASE="#FFB300"
 RAM_BASE="#ffd5cd"
-
-WARNING="#D08770"
-CRITICAL="#BF616A"
-TEXT="#ffffff"
-
-usage_color() {
-    local value="$1"
-    local base="$2"
-
-    if (( value >= 85 )); then
-        printf '%s' "$CRITICAL"
-    elif (( value >= 70 )); then
-        printf '%s' "$WARNING"
-    else
-        printf '%s' "$base"
-    fi
-}
+VRAM_BASE="#A3BE8C"
 
 # --------------------------------------------------
-# CPU usage
+# CPU usage (2回連続実行の差分から算出)
 # --------------------------------------------------
 
 read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
@@ -35,7 +21,10 @@ read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
 idle_now=$((idle + iowait))
 total_now=$((user + nice + system + idle + iowait + irq + softirq + steal))
 
-state="${XDG_RUNTIME_DIR:-/tmp}/regolith-system-meter-${UID}.cpu"
+state_dir="${XDG_RUNTIME_DIR:-/tmp}/regolith-system-meter"
+mkdir -p "$state_dir"
+
+state="$state_dir/cpu-${UID}"
 
 cpu=0
 
@@ -66,58 +55,138 @@ read -r mem_total mem_available < <(
 
 ram=$((100 * (mem_total - mem_available) / mem_total))
 
+# --------------------------------------------------
+# VRAM usage (nvidia-smi / 取得不可時は-1 → 淡色リングのみ)
+# --------------------------------------------------
+
+vram=-1
+
+if command -v nvidia-smi >/dev/null 2>&1; then
+    read -r mem_used mem_total_gpu < <(
+        nvidia-smi \
+            --query-gpu=memory.used,memory.total \
+            --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr ',' ' '
+    )
+
+    if [[ -n "${mem_total_gpu:-}" && "$mem_total_gpu" =~ ^[0-9]+$ ]] && (( mem_total_gpu > 0 )); then
+        vram=$((100 * mem_used / mem_total_gpu))
+    fi
+fi
+
 (( cpu < 0 )) && cpu=0
 (( cpu > 100 )) && cpu=100
 (( ram < 0 )) && ram=0
 (( ram > 100 )) && ram=100
 
-cpu_color="$(usage_color "$cpu" "$CPU_BASE")"
-ram_color="$(usage_color "$ram" "$RAM_BASE")"
-
 # --------------------------------------------------
-# Compact 2-row meter
-#   upper line : CPU
-#   lower line : RAM
+# brailleリング描画(dot単位の判定はpythonで高速化)。
+# 1セル(braille文字)=2x4ドット、リングは横長の楕円。
+# 270度ゲージ: 左下135度から時計回り → 右下45度。底面中央(45..135度)が口。
+# braille文字は1色しか持てないため、セル内の値ドット多数なら値色にする。
 # --------------------------------------------------
 
-cells=25
+render="$(python3 - "$cpu" "$ram" "$vram" <<'PY'
+import math
+import os
+import sys
 
-cpu_cells=$(((cpu * cells + 50) / 100))
-ram_cells=$(((ram * cells + 50) / 100))
+cpu, ram, vram = (int(v) for v in sys.argv[1:4])
+debug = os.environ.get("DEBUG_ART", "") == "1"
 
-# dotfiles palette
-TRACK="#3B4252"
+TRACK = "#4C566A"
+FILLS = {"cpu": "#FFB300", "ram": "#ffd5cd", "vram": "#A3BE8C"}
 
-# バーだけ小さい文字にする。
-# cells=16 のままなので解像度は落ちない。
-BAR_SIZE="4"
+CENTER_X = 12.5
+CENTER_Y = 1.5
+AXIS_Y = 1.62
+INNER = 0.78
+OUTER = 1.16
+SWEEP = 330.0
+START = (90.0 - (SWEEP + 360.0) / 2.0) % 360.0
+CELLS = 13
 
-bar=""
+BRAILLE_BITS = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]]
 
-for ((i=1; i<=cells; i++)); do
-    cpu_cell="$TRACK"
-    ram_cell="$TRACK"
 
-    (( i <= cpu_cells )) && cpu_cell="$cpu_color"
-    (( i <= ram_cells )) && ram_cell="$ram_color"
+def fill_color(usage, base):
+    if usage >= 85:
+        return "#BF616A"
+    if usage >= 70:
+        return "#D08770"
+    return base
 
-    # overline = CPU
-    # underline = RAM
-    # 横幅は小さい「■」1個分
-    bar+="<span \
-font_family=\"JetBrains Mono\" \
-size=\"${BAR_SIZE}pt\" \
-foreground=\"#2E3440\" \
-overline=\"single\" \
-overline_color=\"$cpu_cell\" \
-underline=\"single\" \
-underline_color=\"$ram_cell\">■</span>"
-done
 
-cpu_text=$(printf "%3d%%" "$cpu")
-ram_text=$(printf "%3d%%" "$ram")
+def dot_state(axis_x, x, y, usage):
+    frac = 0.0 if usage < 0 else usage / 100.0
+    dx = (x - CENTER_X) / axis_x
+    dy = (y - CENTER_Y) / AXIS_Y
+    d = math.hypot(dx, dy)
+    if d < INNER or d > OUTER:
+        return "none"
+    t = math.degrees(math.atan2(dy, dx))
+    if t < 0:
+        t += 360.0
+    rel = (t - START) % 360.0
+    if rel > SWEEP:
+        return "none"
+    return "value" if rel <= SWEEP * frac else "track"
 
-printf '%s  <span font_family="JetBrains Mono" foreground="%s">CPU %s</span>  <span font_family="JetBrains Mono" foreground="%s">RAM %s</span>\n' \
-    "$bar" \
-    "$cpu_color" "$cpu_text" \
-    "$ram_color" "$ram_text"
+
+def render_ring(usage, base):
+    axis_x = CENTER_X / 1.02
+    grid = [[dot_state(axis_x, x, y, usage) for x in range(CELLS * 2)] for y in range(4)]
+
+    if debug:
+        sys.stderr.write(
+            "\n".join(
+                "".join(
+                    "=" if grid[y][x] == "value"
+                    else "." if grid[y][x] == "track"
+                    else " "
+                    for x in range(CELLS * 2)
+                )
+                for y in range(4)
+            )
+            + "\n"
+        )
+
+    spans = []
+    for cx in range(CELLS):
+        bits = 0
+        n_value = 0
+        n_track = 0
+        for row in range(4):
+            for col in range(2):
+                state = grid[row][cx * 2 + col]
+                if state == "none":
+                    continue
+                bits |= BRAILLE_BITS[row][col]
+                if state == "value":
+                    n_value += 1
+                else:
+                    n_track += 1
+        if bits == 0:
+            spans.append('<span font_family="DejaVu Sans" size="9.5pt" foreground="%s">\u2800</span>' % TRACK)
+            continue
+        color = fill_color(usage, base) if n_value > n_track else TRACK
+        if usage < 0:
+            color = TRACK
+        spans.append(
+            '<span font_family="DejaVu Sans" size="9.5pt" foreground="%s">%s</span>'
+            % (color, chr(0x2800 + bits))
+        )
+    return "".join(spans)
+
+
+gap = '<span font_family="DejaVu Sans" size="9.5pt" foreground="%s">\u2800\u2800</span>' % TRACK
+
+rings = []
+for name, usage in (("cpu", cpu), ("ram", ram), ("vram", vram)):
+    base = FILLS[name] if usage >= 0 else TRACK
+    rings.append(render_ring(usage, base))
+
+print(gap.join(rings))
+PY
+)"
+
+printf '%s\n' "$render"

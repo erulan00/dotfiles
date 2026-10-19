@@ -1,0 +1,36 @@
+#!/bin/sh
+# OMO_GENERATED_RUNTIME_WRAPPER
+export CODEX_HOME="${CODEX_HOME:-/home/eru/.codex}"
+export OMO_INVOCATION_NAME=omo-agent-toolkit
+export OMO_EDITION=codex
+if [ "$1" = "ulw-loop" ] && [ -x "/home/eru/.local/bin/omo-ulw-loop" ]; then
+  shift
+  exec "/home/eru/.local/bin/omo-ulw-loop" ulw-loop "$@"
+fi
+if [ "${OMO_RUNTIME:-}" = "node" ] && [ -f "/home/eru/.codex/plugins/cache/sisyphuslabs/omo/5.1.30/dist/cli-node/index.js" ]; then
+  exec node "/home/eru/.codex/plugins/cache/sisyphuslabs/omo/5.1.30/dist/cli-node/index.js" "$@"
+fi
+BUN_BINARY="${BUN_BINARY:-}"
+if [ -z "$BUN_BINARY" ] && command -v bun >/dev/null 2>&1; then
+  BUN_BINARY=bun
+fi
+if [ -z "$BUN_BINARY" ]; then
+  for omo_bun_candidate in "$HOME/.bun/bin/bun" /opt/homebrew/bin/bun /usr/local/bin/bun; do
+    if [ -x "$omo_bun_candidate" ]; then
+      BUN_BINARY="$omo_bun_candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$BUN_BINARY" ]; then
+  if [ -f "/home/eru/.codex/plugins/cache/sisyphuslabs/omo/5.1.30/dist/cli-node/index.js" ] && command -v node >/dev/null 2>&1; then
+    exec node "/home/eru/.codex/plugins/cache/sisyphuslabs/omo/5.1.30/dist/cli-node/index.js" "$@"
+  fi
+  echo "omo-agent-toolkit: bun runtime not found (checked PATH, ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin) and the node fallback CLI is missing at /home/eru/.codex/plugins/cache/sisyphuslabs/omo/5.1.30/dist/cli-node/index.js; install bun from https://bun.sh, or reinstall omo-agent-toolkit and force the fallback with OMO_RUNTIME=node" >&2
+  exit 127
+fi
+if [ ! -f "/home/eru/.codex/plugins/cache/sisyphuslabs/omo/5.1.30/dist/cli/index.js" ]; then
+  echo "omo-agent-toolkit: runtime target missing at /home/eru/.codex/plugins/cache/sisyphuslabs/omo/5.1.30/dist/cli/index.js; reinstall with: npx --yes lazycodex-ai@latest install --no-tui" >&2
+  exit 1
+fi
+exec "$BUN_BINARY" "/home/eru/.codex/plugins/cache/sisyphuslabs/omo/5.1.30/dist/cli/index.js" "$@"

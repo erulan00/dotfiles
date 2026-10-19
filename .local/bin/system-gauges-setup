@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# eww system-gauges の依存を取り込む。
+# 1. eww が無い場合はビルド済みバイナリを取得する。
+# 2. cairosvg を ~/.local/share/system-gauges-python に導入する(SVG→PNG描画用)。
+
+pydir="$HOME/.local/share/system-gauges-python"
+
+if ! PYTHONPATH="$pydir" python3 -c "import cairosvg" >/dev/null 2>&1; then
+    mkdir -p "$pydir"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    python3 -m venv "$tmp" >/dev/null
+    "$tmp/bin/pip" install --quiet --target "$pydir" cairosvg
+fi
+
+if ! command -v eww >/dev/null 2>&1; then
+    mkdir -p "$HOME/.local/bin"
+    curl -sL \
+        -o "$HOME/.local/bin/eww" \
+        "https://github.com/BlackScorp/eww-builder/releases/download/v0.6.0/eww-x11"
+    chmod +x "$HOME/.local/bin/eww"
+fi

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+set -u
+
+# eww system-gauges オーバーレイを起動する。
+# daemonがいない場合のみ起動する。
+# 既に開いている場合でも close → open で再前面化してから開く。
+
+dir="$HOME/.config/eww/system-gauges"
+
+if ! "$HOME/.local/bin/eww" -c "$dir" ping >/dev/null 2>&1; then
+    setsid "$HOME/.local/bin/eww" -c "$dir" daemon \
+        >/dev/null 2>&1 < /dev/null &
+    disown || true
+    sleep 1
+fi
+
+"$HOME/.local/bin/eww" -c "$dir" close system-gauges >/dev/null 2>&1 || true
+sleep 0.2
+"$HOME/.local/bin/eww" -c "$dir" open system-gauges >/dev/null 2>&1 || true

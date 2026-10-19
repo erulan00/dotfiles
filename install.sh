@@ -56,7 +56,15 @@ stow -v -t "$HOME/.local" .local
 # activate regolth system meter
 chmod +x \
     "$HOME/.local/bin/regolith-system-meter" \
-    "$HOME/.local/bin/setup-regolith-bar"
+    "$HOME/.local/bin/setup-regolith-bar" \
+    "$HOME/.local/bin/system-gauges" \
+    "$HOME/.local/bin/system-gauges-setup" \
+    "$HOME/.local/bin/system-gauges-start" \
+    "$HOME/.local/bin/system-gauges-toggle"
+
+# eww system gauges (CPU / RAM / VRAM ring overlay)
+# ewwバイトコードとcairosvg(SVG→PNG)をローカルに取り込む
+"$HOME/.local/bin/system-gauges-setup" || echo "system-gauges-setup failed (eww/cairosvg)"
 
 if [ -d /usr/share/i3xrocks/conf.d ]; then
     "$HOME/.local/bin/setup-regolith-bar"

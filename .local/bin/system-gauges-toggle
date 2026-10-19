@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+dir="$HOME/.config/eww/system-gauges"
+
+eww() {
+    "$HOME/.local/bin/eww" -c "$dir" "$@"
+}
+
+if ! eww ping >/dev/null 2>&1; then
+    "$HOME/.local/bin/system-gauges-start"
+    exit 0
+fi
+
+if eww active-windows 2>/dev/null | grep -q "system-gauges"; then
+    eww close system-gauges
+else
+    eww open system-gauges
+fi

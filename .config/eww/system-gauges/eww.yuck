@@ -1,0 +1,11 @@
+(defpoll gauges-img :interval "2s" :initial "$HOME/.config/eww/system-gauges/gauge-init.png" "$HOME/.local/bin/system-gauges")
+
+(defwidget gauges-box []
+  (box :class "gauges-box"
+    (image :path gauges-img)))
+
+(defwindow system-gauges
+  :monitor 0
+  :geometry (geometry :x "48%" :y "0px" :width "100px" :height "25px")
+  :stacking "fg"
+  (gauges-box))
