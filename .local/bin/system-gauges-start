@@ -3,8 +3,20 @@
 set -u
 
 # eww system-gauges オーバーレイを起動する。
-# daemonがいない場合のみ起動する。
-# 既に開いている場合でも close → open で再前面化してから開く。
+# 1) 波形キャプチャデーモン audio-wave-capture
+# 2) ストリップレンダラ system-gauges-render (10Hz描画)
+# を常駐させ、その後 eww ウィンドウを close → open で開く。
+
+# 波形キャプチャデーモン(単一インスタンスはスクリプト自身が管理)
+setsid nohup "$HOME/.local/bin/audio-wave-capture" \
+    >>"$HOME/.cache/eww/wave.log" 2>&1 < /dev/null &
+disown || true
+
+# ストリップレンダラ(単一インスタンスは flock で管理)
+setsid nohup "$HOME/.local/bin/system-gauges-render" \
+    >>"$HOME/.cache/eww/render.log" 2>&1 < /dev/null &
+disown || true
+sleep 0.5
 
 dir="$HOME/.config/eww/system-gauges"
 

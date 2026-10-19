@@ -57,7 +57,9 @@ stow -v -t "$HOME/.local" .local
 chmod +x \
     "$HOME/.local/bin/regolith-system-meter" \
     "$HOME/.local/bin/setup-regolith-bar" \
+    "$HOME/.local/bin/audio-wave-capture" \
     "$HOME/.local/bin/system-gauges" \
+    "$HOME/.local/bin/system-gauges-render" \
     "$HOME/.local/bin/system-gauges-setup" \
     "$HOME/.local/bin/system-gauges-start" \
     "$HOME/.local/bin/system-gauges-toggle"

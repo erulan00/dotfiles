@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""バー内のスペアナ表示用に、システム音声の周波数バンドレベルを常時キャプチャする。
+
+pw-record(PipeWire)でデフォルトシンク(serial指定。node名指定は PipeWire 側で
+別ノードにリンクされる事例があるため serial を使用)を capture し、
+4096サンプル(512ms)の窓に Hann 窓を掛けて rFFT、50Hz〜4kHz を
+24本の対数バンドに集約して 25ms ごとに
+$XDG_RUNTIME_DIR/regolith-wave/samples へ "時刻 v0 v1 ... v23" で追記する。
+二重起動は pid ファイルで防止。
+
+モニタ取り込みはマスタ音量の影響を受けない(音量0でも表示が動く)。
+"""
+
+import math
+import os
+import select
+import struct
+import subprocess
+import sys
+import time
+
+import numpy as np
+
+runtime = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "regolith-wave")
+os.makedirs(runtime, exist_ok=True)
+
+pidfile = os.path.join(runtime, "pid")
+samples_path = os.path.join(runtime, "samples")
+
+# 既に動いていれば何もしない
+if os.path.exists(pidfile):
+    try:
+        with open(pidfile) as f:
+            os.kill(int(f.read().strip()), 0)
+        sys.exit(0)
+    except (ValueError, ProcessLookupError, PermissionError):
+        pass
+
+with open(pidfile, "w") as f:
+    f.write(str(os.getpid()))
+
+rate = 8000
+window = 4096  # 512ms (周波数分解能 1.95Hz)
+hop = 200      # 25ms ごとに1フレーム (40fps)
+
+# デフォルトシンク(serial)の変更検知間隔
+SINK_CHECK_INTERVAL = 5.0
+# ストリームが完全にデータを返さない場合の再接続までの時間
+NO_DATA_TIMEOUT = 30.0
+
+# 50Hz〜4000Hz を 24 バンドに等対数分割
+N_BANDS = 24
+band_edges = [50.0 * (4000.0 / 50.0) ** (i / N_BANDS) for i in range(N_BANDS + 1)]
+band_bins = []
+for i in range(N_BANDS):
+    lo = int(round(band_edges[i] * window / rate))
+    hi = int(round(band_edges[i + 1] * window / rate))
+    lo = max(1, min(lo, window // 2))
+    hi = max(lo + 1, min(hi, window // 2 + 1))
+    band_bins.append((lo, hi))
+
+hann = np.hanning(window).astype(np.float32)
+hann_norm = float(hann.sum()) / 2.0
+
+# 平滑化
+ema = np.zeros(N_BANDS, dtype=np.float64)
+alpha = 0.5
+floor = 0.03
+
+log = open(os.path.join(runtime, "daemon.log"), "a", buffering=1)
+
+
+def clamp(v, lo=0.0, hi=1.0):
+    return max(lo, min(hi, v))
+
+
+def default_sink_serial():
+    """wpctl からデフォルトシンクの object.serial を解決する。"""
+    try:
+        import re
+        out = subprocess.run(
+            ["wpctl", "status"], capture_output=True, text=True, timeout=5
+        ).stdout
+        section = re.split(r"Sinks:", out, maxsplit=1)[1]
+        line = next(l for l in section.splitlines() if "*" in l and "│" in l)
+        device_id = line.split()[2].rstrip(".")
+        insp = subprocess.run(
+            ["wpctl", "inspect", device_id], capture_output=True, text=True, timeout=5
+        ).stdout
+        m = re.search(r'object\.serial = "?(\d+)"?', insp)
+        if m:
+            return m.group(1)
+    except (IndexError, StopIteration, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def write_frame(ts, levels):
+    """samples ファイルに追記し、古すぎる行を削る。"""
+    line = f"{ts:.3f} " + " ".join(f"{v:.3f}" for v in levels) + "\n"
+    try:
+        too_big = os.path.getsize(samples_path) > 80 * 1024
+    except OSError:
+        too_big = False
+    if too_big:
+        with open(samples_path) as f:
+            lines = f.readlines()
+        lines = [l for l in lines if len(l.split()) >= 3][-480:]
+        tmp = samples_path + ".tmp"
+        with open(tmp, "w") as f:
+            f.writelines(lines)
+        os.replace(tmp, samples_path)
+    with open(samples_path, "a") as f:
+        f.write(line)
+
+
+def spectrum_levels(frame):
+    """int16 フレームから 16 バンドの 0..1 レベルを算出する。"""
+    x = frame.astype(np.float32) / 32768.0
+    sp = np.abs(np.fft.rfft(x * hann)) / hann_norm
+    out = []
+    for lo, hi in band_bins:
+        amp = math.sqrt(float(np.mean(sp[lo:hi] ** 2)))
+        db = 20.0 * math.log10(amp + 1e-9)
+        out.append(clamp(((db + 70.0) / 55.0) ** 1.3 if db > -70.0 else 0.0))
+    return np.asarray(out, dtype=np.float64)
+
+
+while True:
+    target = default_sink_serial()
+    if not target:
+        log.write(f"{time.time():.3f} cannot resolve default sink, retry in 5s\n")
+        time.sleep(5)
+        continue
+
+    proc = subprocess.Popen(
+        [
+            "pw-record",
+            "--target",
+            target,
+            "--format=s16",
+            f"--rate={rate}",
+            "--channels=1",
+            "-",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=log,
+    )
+
+    try:
+        buffer = bytearray()
+        frame_index = 0
+        t0 = None
+        last_sink_check = 0.0
+        last_data = time.time()
+        while True:
+            ready, _, _ = select.select([proc.stdout], [], [], 1.0)
+            now = time.time()
+            if ready:
+                chunk = os.read(proc.stdout.fileno(), 65536)
+                if not chunk:
+                    log.write(f"{now:.3f} pw-record stdout EOF (rc={proc.poll()})\n")
+                    break
+                last_data = now
+                if t0 is None:
+                    t0 = now
+                    ema[:] = 0.0
+                    log.write(f"{now:.3f} capturing sink serial={target}\n")
+                buffer += chunk
+                while len(buffer) >= window * 2:
+                    frame = np.frombuffer(
+                        bytes(buffer[: window * 2]), dtype="<i2"
+                    )
+                    levels = spectrum_levels(frame)
+                    ema = ema * (1 - alpha) + levels * alpha
+                    ema[ema < floor] = 0.0
+                    ts = t0 + frame_index * hop / rate
+                    frame_index += 1
+                    write_frame(ts, ema)
+                    del buffer[: hop * 2]
+            # デフォルトシンク再作成で serial が変わったら張り直す
+            if now - last_sink_check >= SINK_CHECK_INTERVAL:
+                last_sink_check = now
+                current = default_sink_serial()
+                if current and current != target:
+                    log.write(
+                        f"{now:.3f} sink serial {target} -> {current}, reconnect\n"
+                    )
+                    break
+            # ストリームが完全に死んだ場合のwatchdog
+            if now - last_data > NO_DATA_TIMEOUT:
+                log.write(f"{now:.3f} no data for {NO_DATA_TIMEOUT}s, reconnect\n")
+                break
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    time.sleep(1)

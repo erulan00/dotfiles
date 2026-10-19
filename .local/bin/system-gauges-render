@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+"""バー用ストリップ [CPU/RAM/VRAM リング][再生中曲名][波形バー] を10Hzで常時レンダリングする。
+
+eww は defpoll で ~/.local/bin/system-gauges (flip読みのみの極軽メータ) を
+10Hzで叩き、本デーモンが書き込む gauge_a.png / gauge_b.png を表示する。
+PNGはテンポラリ→os.replace のアトミック書き込み。
+"""
+
+import fcntl
+import html
+import math
+import os
+import subprocess
+import sys
+import time
+
+runtime = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "eww-system-gauges")
+os.makedirs(runtime, exist_ok=True)
+
+lockfile = open(os.path.join(runtime, "lock"), "w")
+try:
+    fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    sys.exit(0)  # 既に別インスタンスが動いている
+
+with open(os.path.join(runtime, "pid"), "w") as f:
+    f.write(str(os.getpid()))
+
+# --------------------------------------------------
+# 設定 / パレット
+# --------------------------------------------------
+
+W, H = 480, 25
+CY = H / 2
+
+BG = "#282828"
+TRACK = "#4C566A"
+CPU_BASE = "#FFB300"
+RAM_BASE = "#FFD5CD"
+VRAM_BASE = "#A3BE8C"
+WARNING = "#D08770"
+CRITICAL = "#BF616A"
+TITLE_COL = "#D8DEE9"
+ARTIST_COL = "#9AA5B1"
+PLAY_COL = "#FFB300"
+PAUSE_COL = "#6E7681"
+WAVE_COL = "#88C0D0"
+WAVE_IDLE_COL = "#4C566A"
+
+CIRC = 64.088
+
+BAR_W, N_BANDS = 6.6, 24
+WAVE_X = 292.0
+ICON_X = 118.0
+TEXT_X = 140.0
+# タイトル表示領域は以前の半分(140..259)。文字はマーキーで流す。
+TITLE_END = 259.0
+MARQUEE_GAP = 40.0
+MARQUEE_SPEED = 30.0  # px/s
+
+# スペアナのバー配置(292..480 を 24 本、文字列に近づける)
+BAR_PITCH = (W - WAVE_X) / N_BANDS
+SPECTRUM_BOTTOM = 22.0
+
+CHAR_W = 6.95
+WIDE_W = 13.8
+NARROW_W = 4.2
+
+NARROW_CHARS = set("iIlj.,'`|!-")
+
+wave_samples_path = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "regolith-wave", "samples"
+)
+
+
+def clamp(v, lo=0.0, hi=1.0):
+    return max(lo, min(hi, v))
+
+
+def usage_color(value, base):
+    if value >= 85:
+        return CRITICAL
+    if value >= 70:
+        return WARNING
+    return base
+
+
+# --------------------------------------------------
+# 値の取得
+# --------------------------------------------------
+
+class CpuMeter:
+    def __init__(self, state_path):
+        self.state_path = state_path
+        self.prev = None
+        try:
+            with open(state_path) as f:
+                self.prev = tuple(float(x) for x in f.read().split())
+        except (OSError, ValueError):
+            self.prev = None
+
+    def read(self):
+        try:
+            with open("/proc/stat") as f:
+                fields = f.readline().split()[1:10]
+            user_, nice_, sys_, idle_, iowait_, irq_, softirq_, steal_ = (
+                float(x) for x in fields[:8]
+            )
+            idle = idle_ + iowait_
+            total = user_ + nice_ + sys_ + idle + irq_ + softirq_ + steal_
+        except (OSError, ValueError, IndexError):
+            return None
+        prev = self.prev
+        self.prev = (total, idle)
+        with open(self.state_path, "w") as f:
+            f.write(f"{total} {idle}\n")
+        if prev is None:
+            return 0.0
+        d_total, d_idle = total - prev[0], idle - prev[1]
+        if d_total <= 0:
+            return None
+        return clamp(100 * (d_total - d_idle) / d_total, 0.0, 100.0)
+
+
+class Cached:
+    def __init__(self, ttl, fn):
+        self.ttl, self.fn, self.at, self.value = ttl, fn, 0.0, None
+
+    def get(self, now):
+        if now - self.at >= self.ttl or self.value is None:
+            self.at = now
+            self.value = self.fn(now)
+        return self.value
+
+
+def read_ram():
+    try:
+        total = avail = None
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total = int(line.split()[1])
+                elif line.startswith("MemAvailable:"):
+                    avail = int(line.split()[1])
+            if not total or avail is None:
+                return 0.0
+            return clamp(100 * (total - avail) / total, 0.0, 100.0)
+    except (OSError, ValueError):
+        return 0.0
+
+
+def read_vram(_now):
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3,
+        ).stdout
+        used, total = out.split()[0], out.split()[1]
+        total = int(total)
+        if total > 0:
+            return clamp(100 * int(used) / total, 0.0, 100.0)
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        pass
+    return 0.0
+
+
+def read_media(_now):
+    try:
+        return subprocess.run(
+            ["playerctl", "metadata", "--format", "{{status}}|{{title}}|{{artist}}"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def read_spectrum(now):
+    """最新フレームの 16 バンドレベルを返す。なければ None。"""
+    try:
+        with open(wave_samples_path) as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+    best = None
+    for line in lines[-60:]:
+        parts = line.split()
+        if len(parts) != N_BANDS + 1:
+            continue
+        try:
+            ts = float(parts[0])
+            vals = [clamp(float(v)) for v in parts[1:]]
+        except ValueError:
+            continue
+        if best is None or ts > best[0]:
+            best = (ts, vals)
+    if best is None or now - best[0] > 3.0:
+        return None
+    return best[1]
+
+
+# --------------------------------------------------
+# SVG 生成 (リング / メディア / 波形)
+# --------------------------------------------------
+
+def ring(cx, usage, color):
+    vis = f"{CIRC * 0.75 * usage / 100:.2f}"
+    return (
+        f'<g><circle cx="{cx}" cy="{CY}" r="10.2" fill="none" stroke="{TRACK}" '
+        f'stroke-width="3.4" stroke-dasharray="48.07 {CIRC:.2f}" '
+        f'stroke-linecap="round" transform="rotate(135 {cx} {CY})"/>'
+        f'<circle cx="{cx}" cy="{CY}" r="10.2" fill="none" stroke="{color}" '
+        f'stroke-width="3.4" stroke-dasharray="{vis} {CIRC:.2f}" '
+        f'stroke-linecap="round" transform="rotate(135 {cx} {CY})"/></g>'
+    )
+
+
+def char_w(ch):
+    o = ord(ch)
+    if (
+        0x1100 <= o <= 0x115F
+        or 0x2E80 <= o <= 0xA4CF
+        or 0xAC00 <= o <= 0xD7A3
+        or 0xF900 <= o <= 0xFAFF
+        or 0xFE30 <= o <= 0xFE6F
+        or 0xFF00 <= o <= 0xFF60
+        or 0xFFE0 <= o <= 0xFFE6
+        or o >= 0x1F300
+    ):
+        return WIDE_W
+    if ch in NARROW_CHARS:
+        return NARROW_W
+    return CHAR_W
+
+
+def text_w(s):
+    return sum(char_w(c) for c in s)
+
+
+def media_parts(status, title, artist, now):
+    """(icon_svg, text_svg) を返す。テキストは幅超過時にマーキーで流れる。"""
+    if not status:
+        return "", ""
+    if status == "Playing":
+        icon = (
+            f'<path d="M{ICON_X} 7.5 L{ICON_X} 17.5 L{ICON_X + 9.5} 12.5 Z" '
+            f'fill="{PLAY_COL}"/>'
+        )
+        main_col = TITLE_COL
+    else:
+        icon = (
+            f'<rect x="{ICON_X}" y="7.5" width="3.2" height="10" fill="{PAUSE_COL}"/>'
+            f'<rect x="{ICON_X + 6.2}" y="7.5" width="3.2" height="10" '
+            f'fill="{PAUSE_COL}"/>'
+        )
+        main_col = "#8F98A3"
+
+    segs = [(title, main_col)]
+    if artist and artist != title:
+        segs.append(("  \u00b7  " + artist, ARTIST_COL))
+
+    full_w = sum(text_w(t) for t, _ in segs)
+    viewport_w = TITLE_END - TEXT_X
+
+    offset = 0.0
+    if full_w > viewport_w:
+        cycle = full_w + MARQUEE_GAP
+        offset = (now * MARQUEE_SPEED) % cycle
+        if offset >= full_w:
+            return icon, ""  # 空白区間(ループの切れ目)
+
+    body = "".join(
+        f'<tspan fill="{col}">{html.escape(text)}</tspan>' for text, col in segs
+    )
+    # cairo の toy API はフォールバックしないため、CJK を含む場合は
+    # CJK 対応フォントを明示する
+    has_cjk = any(ord(c) >= 0x2E80 for c in title + artist)
+    family = "Noto Sans CJK JP" if has_cjk else "JetBrains Mono"
+    text_svg = (
+        f'<text x="{TEXT_X - offset:.2f}" y="16.7" font-family="{family}" '
+        f'font-size="11.5">{body}</text>'
+    )
+    return icon, text_svg
+
+
+def spectrum_svg(levels):
+    """24バンドのスペアナを下から上へ描く。levels が None なら待機表示。"""
+    rects = []
+    for b in range(N_BANDS):
+        lvl = levels[b] if levels else 0.0
+        h_ = 1.8 + 17.2 * lvl
+        x = WAVE_X + b * BAR_PITCH + (BAR_PITCH - BAR_W) / 2
+        col = WAVE_IDLE_COL if lvl <= 0.01 else WAVE_COL
+        rects.append(
+            f'<rect x="{x:.1f}" y="{SPECTRUM_BOTTOM - h_:.2f}" width="{BAR_W}" '
+            f'height="{h_:.2f}" rx="1.7" fill="{col}"/>'
+        )
+    return "".join(rects)
+
+
+# --------------------------------------------------
+# メインループ (10Hz)
+# --------------------------------------------------
+
+try:
+    _pydir = os.path.join(
+        os.path.expanduser("~"), ".local/share/system-gauges-python"
+    )
+    if os.path.isdir(_pydir):
+        sys.path.insert(0, _pydir)
+    import cairosvg
+except ImportError as exc:
+    print(f"cairosvg unavailable: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+cpu_meter = CpuMeter(os.path.join(runtime, "cpu.state"))
+vram_cache = Cached(1.0, read_vram)
+media_cache = Cached(1.0, read_media)
+
+try:
+    with open(os.path.join(runtime, "flip")) as f:
+        completed = int(f.read().strip())
+except (OSError, ValueError):
+    completed = 0
+
+TICK = 0.05
+
+while True:
+    loop_start = time.perf_counter()
+    now = time.time()
+
+    cpu = cpu_meter.read() or 0.0
+    ram = read_ram()
+    vram = vram_cache.get(now)
+    media = media_cache.get(now)
+
+    status, title, artist = "", "", ""
+    if "|" in media:
+        parts = media.split("|", 2)
+        status = parts[0].strip()
+        title = parts[1].strip() if len(parts) > 1 else ""
+        artist = parts[2].strip() if len(parts) > 2 else ""
+    if status not in ("Playing", "Paused"):
+        status, title, artist = "", "", ""
+
+    media_icon, media_text = media_parts(status, title, artist, now)
+
+    # マーキーでタイトルが領域外へ出た分を背景色でマスクする
+    mask_left = f'<rect x="0" y="0" width="{TEXT_X}" height="{H}" fill="{BG}"/>'
+    mask_right = (
+        f'<rect x="{TITLE_END}" y="0" width="{W - TITLE_END}" height="{H}" '
+        f'fill="{BG}"/>'
+    )
+
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+        f'viewBox="0 0 {W} {H}">'
+        f'<rect x="0" y="0" width="{W}" height="{H}" fill="{BG}"/>'
+        f'{media_text}'
+        f'{mask_left}'
+        f'{mask_right}'
+        f'{media_icon}'
+        f'{ring(15, cpu, usage_color(cpu, CPU_BASE))}'
+        f'{ring(50, ram, usage_color(ram, RAM_BASE))}'
+        f'{ring(85, vram, usage_color(vram, VRAM_BASE))}'
+        f'{spectrum_svg(read_spectrum(now))}'
+        f'</svg>'
+    )
+
+    completed ^= 1
+    target = os.path.join(runtime, f"gauge_{'b' if completed else 'a'}.png")
+    tmp = target + ".part"
+    try:
+        cairosvg.svg2png(
+            bytestring=svg.encode(), write_to=tmp,
+            output_width=W, output_height=H,
+        )
+        os.replace(tmp, target)
+        with open(os.path.join(runtime, "flip"), "w") as f:
+            f.write(str(completed))
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+    time.sleep(max(0.0, TICK - (time.perf_counter() - loop_start)))
