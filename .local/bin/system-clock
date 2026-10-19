@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+set -u
+
+# eww clock-analog 用の極軽メータ。
+# アナログ時計PNGは常駐デーモン system-gauges-render が描画し、
+# 本スクリプトは「最新の完成済みPNGのパス」を返すだけ。
+
+runtime="${XDG_RUNTIME_DIR:-/tmp}/eww-system-gauges"
+
+flip=0
+[[ -r "$runtime/clock-flip" ]] && read -r flip < "$runtime/clock-flip" 2>/dev/null
+
+target="$runtime/clock_a.png"
+if [[ "${flip:-0}" == 1 && -r "$runtime/clock_b.png" ]]; then
+    target="$runtime/clock_b.png"
+fi
+
+printf '%s\n' "$target"

@@ -8,6 +8,20 @@ eww() {
     "$HOME/.local/bin/eww" -c "$dir" "$@"
 }
 
+fix_shadow() {
+    local title="$1" wid=""
+    for _ in 1 2 3 4 5 6; do
+        wid="$(xdotool search --name "^${title}$" 2>/dev/null | head -1)"
+        [[ -n "$wid" ]] && break
+        sleep 0.2
+    done
+    if [[ -n "$wid" ]]; then
+        xprop -id "$wid" -f _NET_WM_WINDOW_TYPE 32a \
+            -set _NET_WM_WINDOW_TYPE _NET_WM_WINDOW_TYPE_POPUP_MENU \
+            >/dev/null 2>&1 || true
+    fi
+}
+
 if ! eww ping >/dev/null 2>&1; then
     "$HOME/.local/bin/system-gauges-start"
     exit 0
@@ -15,6 +29,10 @@ fi
 
 if eww active-windows 2>/dev/null | grep -q "system-gauges"; then
     eww close system-gauges
+    eww close clock-analog
 else
     eww open system-gauges
+    eww open clock-analog
+    fix_shadow "Eww - system-gauges"
+    fix_shadow "Eww - clock-analog"
 fi

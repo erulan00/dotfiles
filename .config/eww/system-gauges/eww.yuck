@@ -1,11 +1,22 @@
 (defpoll gauges-img :interval "50ms" :initial "$HOME/.config/eww/system-gauges/gauge-init.png" "$HOME/.local/bin/system-gauges")
+(defpoll clock-img :interval "50ms" :initial "$HOME/.config/eww/system-gauges/clock-init.png" "$HOME/.local/bin/system-clock")
 
 (defwidget gauges-box []
   (box :class "gauges-box"
     (image :path gauges-img)))
 
+(defwidget clock-box []
+  (box :class "gauges-box"
+    (image :path clock-img)))
+
 (defwindow system-gauges
   :monitor 0
-  :geometry (geometry :x "65.9%" :y "0px" :width "480px" :height "25px")
+  :geometry (geometry :x "66.5%" :y "0px" :width "464px" :height "25px")
   :stacking "fg"
   (gauges-box))
+
+(defwindow clock-analog
+  :monitor 0
+  :geometry (geometry :x "2391px" :y "2px" :width "20px" :height "20px")
+  :stacking "fg"
+  (clock-box))

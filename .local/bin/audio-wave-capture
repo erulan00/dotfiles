@@ -62,9 +62,11 @@ for i in range(N_BANDS):
 hann = np.hanning(window).astype(np.float32)
 hann_norm = float(hann.sum()) / 2.0
 
-# 平滑化
+# 平滑化 (スペアナらしくなめらかに見せるため、立ち上がりは速く、
+# 減衰はゆっくりにした非対称スムージング)
 ema = np.zeros(N_BANDS, dtype=np.float64)
-alpha = 0.5
+attack = 0.55
+release = 0.12
 floor = 0.03
 
 log = open(os.path.join(runtime, "daemon.log"), "a", buffering=1)
@@ -172,7 +174,9 @@ while True:
                         bytes(buffer[: window * 2]), dtype="<i2"
                     )
                     levels = spectrum_levels(frame)
-                    ema = ema * (1 - alpha) + levels * alpha
+                    up = levels > ema
+                    a = np.where(up, attack, release)
+                    ema = ema * (1 - a) + levels * a
                     ema[ema < floor] = 0.0
                     ts = t0 + frame_index * hop / rate
                     frame_index += 1

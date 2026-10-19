@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""バー用ストリップ [CPU/RAM/VRAM リング][再生中曲名][波形バー] を10Hzで常時レンダリングする。
+"""バー用ストリップ [ジャケット][CPU/RAM/VRAM リング][再生中曲名][スペアナ] を20Hzで描画する。
 
 eww は defpoll で ~/.local/bin/system-gauges (flip読みのみの極軽メータ) を
-10Hzで叩き、本デーモンが書き込む gauge_a.png / gauge_b.png を表示する。
+叩き、本デーモンが書き込む gauge_a.png / gauge_b.png を表示する。
 PNGはテンポラリ→os.replace のアトミック書き込み。
 """
 
+import base64
 import fcntl
 import html
 import math
 import os
 import subprocess
 import sys
+import threading
 import time
 
 runtime = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "eww-system-gauges")
@@ -30,7 +32,7 @@ with open(os.path.join(runtime, "pid"), "w") as f:
 # 設定 / パレット
 # --------------------------------------------------
 
-W, H = 480, 25
+W, H = 464, 25
 CY = H / 2
 
 BG = "#282828"
@@ -44,22 +46,30 @@ TITLE_COL = "#D8DEE9"
 ARTIST_COL = "#9AA5B1"
 PLAY_COL = "#FFB300"
 PAUSE_COL = "#6E7681"
-WAVE_COL = "#88C0D0"
-WAVE_IDLE_COL = "#4C566A"
+WAVE_IDLE_COL = "#3B4252"
 
 CIRC = 64.088
 
+# ジャケット絵
+ART_X, ART_Y, ART_SIZE = 2.0, 2.0, 21.0
+
+# 並び(左→右): ジャケット, スペアナ, リング, 曲名 → (この右にネット速度, 時計)
 BAR_W, N_BANDS = 6.6, 24
-WAVE_X = 292.0
-ICON_X = 118.0
-TEXT_X = 140.0
-# タイトル表示領域は以前の半分(140..259)。文字はマーキーで流す。
-TITLE_END = 259.0
-MARQUEE_GAP = 40.0
+WAVE_X = 29.0
+SPECTRUM_W = 185.0
+ICON_X = 330.0
+TEXT_X = 340.0
+# タイトル表示領域は以前の半分(119px)。文字はマーキーで流す。
+TITLE_END = 459.0
+MARQUEE_GAP = 28.0
 MARQUEE_SPEED = 30.0  # px/s
 
-# スペアナのバー配置(292..480 を 24 本、文字列に近づける)
-BAR_PITCH = (W - WAVE_X) / N_BANDS
+# マーキー状態: 曲が変わったら右端から流れ込ませる
+marquee_key = None
+marquee_start = 0.0
+
+# スペアナのバー配置(29..214 を 24 本)
+BAR_PITCH = SPECTRUM_W / N_BANDS
 SPECTRUM_BOTTOM = 22.0
 
 CHAR_W = 6.95
@@ -168,21 +178,73 @@ def read_vram(_now):
 def read_media(_now):
     try:
         return subprocess.run(
-            ["playerctl", "metadata", "--format", "{{status}}|{{title}}|{{artist}}"],
+            ["playerctl", "metadata", "--format",
+             "{{status}}|{{title}}|{{artist}}|{{mpris:artUrl}}"],
             capture_output=True, text=True, timeout=2,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
 
 
+art_url_seen = None
+art_b64 = (None, None)
+
+
+def _fetch_art(url):
+    """mpris:artUrl を取得して 42x42 のPNGに変換する(別スレッド)."""
+    path = os.path.join(runtime, "art.png")
+    tmp = path + ".tmp"
+    src = os.path.join(runtime, "art.src")
+    try:
+        if url.startswith("file://"):
+            subprocess.run(
+                ["convert", url[7:], "-resize", "42x42^", "-gravity", "center",
+                 "-extent", "42x42", "-strip", tmp],
+                check=True, timeout=8, capture_output=True,
+            )
+        else:
+            subprocess.run(
+                ["curl", "-sL", "--max-time", "6", "-o", src, url],
+                check=True, timeout=10, capture_output=True,
+            )
+            subprocess.run(
+                ["convert", src, "-resize", "42x42^", "-gravity", "center",
+                 "-extent", "42x42", "-strip", tmp],
+                check=True, timeout=8, capture_output=True,
+            )
+        os.replace(tmp, path)
+    except (OSError, subprocess.SubprocessError):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def art_data_uri():
+    """art.png を data URI 化する (mtime でキャッシュ)."""
+    global art_b64
+    path = os.path.join(runtime, "art.png")
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    if art_b64[0] != st.st_mtime_ns:
+        with open(path, "rb") as f:
+            art_b64 = (
+                st.st_mtime_ns,
+                "data:image/png;base64," + base64.b64encode(f.read()).decode(),
+            )
+    return art_b64[1]
+
+
 def read_spectrum(now):
-    """最新フレームの 16 バンドレベルを返す。なければ None。"""
+    """直近の複数フレームを平均したバンドレベルを返す(なめらかさ優先)。"""
     try:
         with open(wave_samples_path) as f:
             lines = f.readlines()
     except OSError:
         return None
-    best = None
+    rows = []
     for line in lines[-60:]:
         parts = line.split()
         if len(parts) != N_BANDS + 1:
@@ -192,11 +254,16 @@ def read_spectrum(now):
             vals = [clamp(float(v)) for v in parts[1:]]
         except ValueError:
             continue
-        if best is None or ts > best[0]:
-            best = (ts, vals)
-    if best is None or now - best[0] > 3.0:
+        rows.append((ts, vals))
+    if not rows:
         return None
-    return best[1]
+    rows.sort()
+    newest = rows[-1][0]
+    if now - newest > 3.0:
+        return None
+    recent = [v for ts, v in rows if ts >= newest - 0.24]
+    n = len(recent)
+    return [sum(col) / n for col in zip(*recent)]
 
 
 # --------------------------------------------------
@@ -239,8 +306,16 @@ def text_w(s):
 
 def media_parts(status, title, artist, now):
     """(icon_svg, text_svg) を返す。テキストは幅超過時にマーキーで流れる。"""
+    global marquee_key, marquee_start
+
     if not status:
+        marquee_key = None
         return "", ""
+
+    key = title + "\x00" + artist
+    if key != marquee_key:
+        marquee_key = key
+        marquee_start = now
     if status == "Playing":
         icon = (
             f'<path d="M{ICON_X} 7.5 L{ICON_X} 17.5 L{ICON_X + 9.5} 12.5 Z" '
@@ -262,12 +337,16 @@ def media_parts(status, title, artist, now):
     full_w = sum(text_w(t) for t, _ in segs)
     viewport_w = TITLE_END - TEXT_X
 
-    offset = 0.0
     if full_w > viewport_w:
-        cycle = full_w + MARQUEE_GAP
-        offset = (now * MARQUEE_SPEED) % cycle
-        if offset >= full_w:
-            return icon, ""  # 空白区間(ループの切れ目)
+        # 画面右外(=-viewport_w)から流れ込み、左へ抜けたら間隔を置いて再入場
+        cycle = viewport_w + full_w + MARQUEE_GAP
+        progress = ((now - marquee_start) * MARQUEE_SPEED) % cycle
+        offset = progress - viewport_w
+        if offset > full_w:
+            return icon, ""  # 完全に左へ抜けた後
+        x = TEXT_X - offset
+    else:
+        x = TEXT_X
 
     body = "".join(
         f'<tspan fill="{col}">{html.escape(text)}</tspan>' for text, col in segs
@@ -277,7 +356,7 @@ def media_parts(status, title, artist, now):
     has_cjk = any(ord(c) >= 0x2E80 for c in title + artist)
     family = "Noto Sans CJK JP" if has_cjk else "JetBrains Mono"
     text_svg = (
-        f'<text x="{TEXT_X - offset:.2f}" y="16.7" font-family="{family}" '
+        f'<text x="{x:.2f}" y="16.7" font-family="{family}" '
         f'font-size="11.5">{body}</text>'
     )
     return icon, text_svg
@@ -290,7 +369,7 @@ def spectrum_svg(levels):
         lvl = levels[b] if levels else 0.0
         h_ = 1.8 + 17.2 * lvl
         x = WAVE_X + b * BAR_PITCH + (BAR_PITCH - BAR_W) / 2
-        col = WAVE_IDLE_COL if lvl <= 0.01 else WAVE_COL
+        col = WAVE_IDLE_COL if lvl <= 0.01 else "url(#barGrad)"
         rects.append(
             f'<rect x="{x:.1f}" y="{SPECTRUM_BOTTOM - h_:.2f}" width="{BAR_W}" '
             f'height="{h_:.2f}" rx="1.7" fill="{col}"/>'
@@ -298,8 +377,41 @@ def spectrum_svg(levels):
     return "".join(rects)
 
 
+def clock_svg(now):
+    """20x20 のアナログ時計(時・分・秒針)を描く。"""
+    size = 20.0
+    c = size / 2.0
+    r = 8.0
+    lt = time.localtime(now)
+    sec = lt.tm_sec + (now % 1.0)
+    minute = lt.tm_min + sec / 60.0
+    hour = (lt.tm_hour % 12) + minute / 60.0
+
+    def hand(angle, length, width, color):
+        a = math.radians(angle - 90.0)
+        return (
+            f'<line x1="{c:.2f}" y1="{c:.2f}" '
+            f'x2="{c + length * math.cos(a):.2f}" '
+            f'y2="{c + length * math.sin(a):.2f}" '
+            f'stroke="{color}" stroke-width="{width}" stroke-linecap="round"/>'
+        )
+
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" '
+        f'viewBox="0 0 20 20">'
+        f'<rect x="0" y="0" width="20" height="20" fill="{BG}"/>'
+        f'<circle cx="{c}" cy="{c}" r="{r}" fill="none" stroke="#8F98A3" '
+        f'stroke-width="1.1"/>'
+        f'{hand(hour * 30.0, 4.2, 1.7, "#D8DEE9")}'
+        f'{hand(minute * 6.0, 6.2, 1.2, "#D8DEE9")}'
+        f'{hand(sec * 6.0, 7.0, 0.65, "#FFB300")}'
+        f'<circle cx="{c}" cy="{c}" r="1.1" fill="#D8DEE9"/>'
+        f'</svg>'
+    )
+
+
 # --------------------------------------------------
-# メインループ (10Hz)
+# メインループ (20Hz)
 # --------------------------------------------------
 
 try:
@@ -325,6 +437,15 @@ except (OSError, ValueError):
 
 TICK = 0.05
 
+try:
+    with open(os.path.join(runtime, "clock-flip")) as f:
+        clock_flip = int(f.read().strip())
+except (OSError, ValueError):
+    clock_flip = 0
+
+# 表示側の追加スムージング(データより滑らかに見せる)
+display_levels = None
+
 while True:
     loop_start = time.perf_counter()
     now = time.time()
@@ -334,14 +455,28 @@ while True:
     vram = vram_cache.get(now)
     media = media_cache.get(now)
 
-    status, title, artist = "", "", ""
+    status, title, artist, art_url = "", "", "", ""
     if "|" in media:
-        parts = media.split("|", 2)
+        parts = media.split("|", 3)
         status = parts[0].strip()
         title = parts[1].strip() if len(parts) > 1 else ""
         artist = parts[2].strip() if len(parts) > 2 else ""
+        art_url = parts[3].strip() if len(parts) > 3 else ""
     if status not in ("Playing", "Paused"):
-        status, title, artist = "", "", ""
+        status, title, artist, art_url = "", "", "", ""
+
+    if art_url != art_url_seen:
+        art_url_seen = art_url
+        if art_url:
+            threading.Thread(target=_fetch_art, args=(art_url,), daemon=True).start()
+
+    target_levels = read_spectrum(now) or [0.0] * N_BANDS
+    if display_levels is None:
+        display_levels = list(target_levels)
+    else:
+        display_levels = [
+            d * 0.62 + t * 0.38 for d, t in zip(display_levels, target_levels)
+        ]
 
     media_icon, media_text = media_parts(status, title, artist, now)
 
@@ -352,18 +487,34 @@ while True:
         f'fill="{BG}"/>'
     )
 
+    art_uri = art_data_uri()
+    art_svg = (
+        f'<image x="{ART_X}" y="{ART_Y}" width="{ART_SIZE}" height="{ART_SIZE}" '
+        f'xlink:href="{art_uri}"/>'
+        if art_uri else ""
+    )
+    defs = (
+        '<defs><linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">'
+        '<stop offset="0" stop-color="#E8FAFF"/>'
+        '<stop offset="0.45" stop-color="#8FD2E8"/>'
+        '<stop offset="1" stop-color="#4E8DA3"/>'
+        '</linearGradient></defs>'
+    )
     svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
-        f'viewBox="0 0 {W} {H}">'
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'xmlns:xlink="http://www.w3.org/1999/xlink" '
+        f'width="{W}" height="{H}" viewBox="0 0 {W} {H}">'
+        f'{defs}'
         f'<rect x="0" y="0" width="{W}" height="{H}" fill="{BG}"/>'
         f'{media_text}'
         f'{mask_left}'
         f'{mask_right}'
+        f'{art_svg}'
         f'{media_icon}'
-        f'{ring(15, cpu, usage_color(cpu, CPU_BASE))}'
-        f'{ring(50, ram, usage_color(ram, RAM_BASE))}'
-        f'{ring(85, vram, usage_color(vram, VRAM_BASE))}'
-        f'{spectrum_svg(read_spectrum(now))}'
+        f'{ring(239, cpu, usage_color(cpu, CPU_BASE))}'
+        f'{ring(274, ram, usage_color(ram, RAM_BASE))}'
+        f'{ring(309, vram, usage_color(vram, VRAM_BASE))}'
+        f'{spectrum_svg(display_levels)}'
         f'</svg>'
     )
 
@@ -381,6 +532,26 @@ while True:
     except OSError:
         try:
             os.remove(tmp)
+        except OSError:
+            pass
+
+    # アナログ時計 (20x20)
+    clock_flip ^= 1
+    clock_target = os.path.join(
+        runtime, f"clock_{'b' if clock_flip else 'a'}.png"
+    )
+    clock_tmp = clock_target + ".part"
+    try:
+        cairosvg.svg2png(
+            bytestring=clock_svg(now).encode(), write_to=clock_tmp,
+            output_width=20, output_height=20,
+        )
+        os.replace(clock_tmp, clock_target)
+        with open(os.path.join(runtime, "clock-flip"), "w") as f:
+            f.write(str(clock_flip))
+    except OSError:
+        try:
+            os.remove(clock_tmp)
         except OSError:
             pass
 

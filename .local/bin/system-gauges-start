@@ -2,9 +2,9 @@
 
 set -u
 
-# eww system-gauges オーバーレイを起動する。
-# 1) 波形キャプチャデーモン audio-wave-capture
-# 2) ストリップレンダラ system-gauges-render (10Hz描画)
+# eww system-gauges / clock-analog オーバーレイを起動する。
+# 1) スペクトラム用キャプチャデーモン audio-wave-capture
+# 2) ストリップ+時計レンダラ system-gauges-render (20Hz描画)
 # を常駐させ、その後 eww ウィンドウを close → open で開く。
 
 # 波形キャプチャデーモン(単一インスタンスはスクリプト自身が管理)
@@ -27,6 +27,27 @@ if ! "$HOME/.local/bin/eww" -c "$dir" ping >/dev/null 2>&1; then
     sleep 1
 fi
 
+# eww は DOCK タイプで開くため picom が影を描いてしまう。
+# POPUP_MENU(shadow=false, opacity=1.0) に変更してバーに完全に溶け込ませる。
+fix_shadow() {
+    local title="$1" wid=""
+    for _ in 1 2 3 4 5 6; do
+        wid="$(xdotool search --name "^${title}$" 2>/dev/null | head -1)"
+        [[ -n "$wid" ]] && break
+        sleep 0.2
+    done
+    if [[ -n "$wid" ]]; then
+        xprop -id "$wid" -f _NET_WM_WINDOW_TYPE 32a \
+            -set _NET_WM_WINDOW_TYPE _NET_WM_WINDOW_TYPE_POPUP_MENU \
+            >/dev/null 2>&1 || true
+    fi
+}
+
 "$HOME/.local/bin/eww" -c "$dir" close system-gauges >/dev/null 2>&1 || true
+"$HOME/.local/bin/eww" -c "$dir" close clock-analog >/dev/null 2>&1 || true
 sleep 0.2
 "$HOME/.local/bin/eww" -c "$dir" open system-gauges >/dev/null 2>&1 || true
+"$HOME/.local/bin/eww" -c "$dir" open clock-analog >/dev/null 2>&1 || true
+
+fix_shadow "Eww - system-gauges"
+fix_shadow "Eww - clock-analog"
