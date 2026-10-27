@@ -3,7 +3,12 @@
 
 (defwidget gauges-box []
   (box :class "gauges-box"
-    (image :path gauges-img)))
+    (overlay
+      (image :path gauges-img)
+      (box :halign "start" :valign "fill"
+        (box :width 24 :height 25)
+        (eventbox :onclick "playerctl play-pause" :cursor "pointer"
+          (box :width 20 :height 25))))))
 
 (defwidget clock-box []
   (box :class "gauges-box"
