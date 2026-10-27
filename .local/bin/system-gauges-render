@@ -68,6 +68,42 @@ MARQUEE_SPEED = 30.0  # px/s
 marquee_key = None
 marquee_start = 0.0
 
+# eww の再読み込みで DOCK に戻ると picom が影を描くため、定期的に
+# POPUP_MENU (shadow=false) へ戻す。
+SHADOW_TITLES = ("Eww - system-gauges", "Eww - clock-analog")
+SHADOW_FIX_INTERVAL = 2.0
+shadow_fix_at = 0.0
+
+
+def fix_eww_window_shadows(now):
+    global shadow_fix_at
+    if now - shadow_fix_at < SHADOW_FIX_INTERVAL:
+        return
+    shadow_fix_at = now
+    for title in SHADOW_TITLES:
+        try:
+            ids = subprocess.run(
+                ["xdotool", "search", "--name", f"^{title}$"],
+                capture_output=True, text=True, timeout=1,
+            ).stdout.split()
+            if not ids:
+                continue
+            wid = ids[0]
+            kind = subprocess.run(
+                ["xprop", "-id", wid, "_NET_WM_WINDOW_TYPE"],
+                capture_output=True, text=True, timeout=1,
+            ).stdout
+            if "_NET_WM_WINDOW_TYPE_POPUP_MENU" in kind:
+                continue
+            subprocess.run(
+                ["xprop", "-id", wid, "-f", "_NET_WM_WINDOW_TYPE", "32a",
+                 "-set", "_NET_WM_WINDOW_TYPE",
+                 "_NET_WM_WINDOW_TYPE_POPUP_MENU"],
+                capture_output=True, text=True, timeout=1,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+
 # スペアナのバー配置(170..355 を 24 本)
 BAR_PITCH = SPECTRUM_W / N_BANDS
 SPECTRUM_BOTTOM = 22.0
@@ -467,6 +503,8 @@ except (OSError, IndexError):
 while True:
     loop_start = time.perf_counter()
     now = time.time()
+
+    fix_eww_window_shadows(now)
 
     cpu = cpu_meter.read() or 0.0
     ram = read_ram()
